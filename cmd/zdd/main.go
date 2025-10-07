@@ -145,9 +145,9 @@ func listCommand(ctx context.Context, cmd *cli.Command) error {
 	if len(status.Pending) > 0 {
 		fmt.Printf("\nPending (%d):\n", len(status.Pending))
 		for _, m := range status.Pending {
-			hasExpandSQL := hasNonEmptySQL(m.ExpandSQLFiles)
-			hasMigrateSQL := hasNonEmptySQL(m.MigrateSQLFiles)
-			hasContractSQL := hasNonEmptySQL(m.ContractSQLFiles)
+			hasExpandSQL := zdd.HasNonEmptySQL(m.ExpandSQLFiles)
+			hasMigrateSQL := zdd.HasNonEmptySQL(m.MigrateSQLFiles)
+			hasContractSQL := zdd.HasNonEmptySQL(m.ContractSQLFiles)
 
 			var flags []string
 			if hasExpandSQL {
@@ -232,24 +232,4 @@ func getConfig(cmd *cli.Command) (*zdd.Config, error) {
 		MigrationsPath: migrationsPath,
 		DeployCommand:  deployCommand,
 	}, nil
-}
-
-func hasNonEmptySQL(sqlFiles []zdd.SQLFile) bool {
-	for _, sqlFile := range sqlFiles {
-		content := strings.TrimSpace(sqlFile.Content)
-		if content != "" &&
-			!strings.HasPrefix(content, "-- Expand phase SQL (optional)") &&
-			!strings.HasPrefix(content, "-- Migrate phase SQL (optional)") &&
-			!strings.HasPrefix(content, "-- Contract phase SQL (optional)") {
-			// Check if there's actual SQL content beyond comments
-			lines := strings.Split(content, "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line != "" && !strings.HasPrefix(line, "--") {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }

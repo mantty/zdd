@@ -337,50 +337,12 @@ func CalculateChecksum(migration Migration) string {
 	return fmt.Sprintf("%x", hasher.Sum(nil))
 }
 
-// HasNonEmptyExpandSQL checks if migration has non-empty expand SQL
-func HasNonEmptyExpandSQL(migration Migration) bool {
-	for _, sqlFile := range migration.ExpandSQLFiles {
+// HasNonEmptySQL checks if a slice of SQL files contains non-empty SQL content
+// It returns true if any file contains actual SQL statements (not just comments or whitespace)
+func HasNonEmptySQL(sqlFiles []SQLFile) bool {
+	for _, sqlFile := range sqlFiles {
 		content := strings.TrimSpace(sqlFile.Content)
-		if content != "" &&
-			!strings.HasPrefix(content, "-- Expand phase SQL (optional)") {
-			// Check if there's actual SQL content beyond comments
-			lines := strings.Split(content, "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line != "" && !strings.HasPrefix(line, "--") {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// HasNonEmptyMigrateSQL checks if migration has non-empty migrate SQL
-func HasNonEmptyMigrateSQL(migration Migration) bool {
-	for _, sqlFile := range migration.MigrateSQLFiles {
-		content := strings.TrimSpace(sqlFile.Content)
-		if content != "" &&
-			!strings.HasPrefix(content, "-- Migrate phase SQL (optional)") {
-			// Check if there's actual SQL content beyond comments
-			lines := strings.Split(content, "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line != "" && !strings.HasPrefix(line, "--") {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// HasNonEmptyContractSQL checks if migration has non-empty contract SQL
-func HasNonEmptyContractSQL(migration Migration) bool {
-	for _, sqlFile := range migration.ContractSQLFiles {
-		content := strings.TrimSpace(sqlFile.Content)
-		if content != "" &&
-			!strings.HasPrefix(content, "-- Contract phase SQL (optional)") {
+		if content != "" {
 			// Check if there's actual SQL content beyond comments
 			lines := strings.Split(content, "\n")
 			for _, line := range lines {
@@ -400,9 +362,9 @@ func ValidateOutstandingMigrations(pending []Migration) error {
 	migrationsWithExpandContract := 0
 
 	for _, migration := range pending {
-		hasExpandSQL := HasNonEmptyExpandSQL(migration)
-		hasMigrateSQL := HasNonEmptyMigrateSQL(migration)
-		hasContractSQL := HasNonEmptyContractSQL(migration)
+		hasExpandSQL := HasNonEmptySQL(migration.ExpandSQLFiles)
+		hasMigrateSQL := HasNonEmptySQL(migration.MigrateSQLFiles)
+		hasContractSQL := HasNonEmptySQL(migration.ContractSQLFiles)
 
 		if hasExpandSQL || hasMigrateSQL || hasContractSQL {
 			migrationsWithExpandContract++
