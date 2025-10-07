@@ -50,7 +50,16 @@ func main() {
 				Name:    "create",
 				Aliases: []string{"new"},
 				Usage:   "Create a new migration",
-				Action:  createCommand,
+				Arguments: []cli.Argument{
+					&cli.StringArg{
+						Name:      "name",
+						UsageText: "NAME",
+						Config: cli.StringConfig{
+							TrimSpace: true,
+						},
+					},
+				},
+				Action: createCommand,
 			},
 			{
 				Name:   "list",
@@ -71,11 +80,11 @@ func main() {
 }
 
 func createCommand(ctx context.Context, cmd *cli.Command) error {
-	if cmd.Args().Len() == 0 {
+	name := cmd.StringArg("name")
+	if name == "" {
 		return fmt.Errorf("migration name is required")
 	}
 
-	name := strings.Join(cmd.Args().Slice(), "_")
 	migrationsPath := cmd.String("migrations-path")
 
 	mm := zdd.NewMigrationManager(migrationsPath)
@@ -84,12 +93,7 @@ func createCommand(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("failed to create migration: %w", err)
 	}
 
-	fmt.Printf("Created migration %s: %s\n", migration.ID, migration.Name)
-	fmt.Printf("  Directory: %s\n", migration.Directory)
-	fmt.Printf("  Expand SQL:   %s\n", migration.ExpandSQLFiles[0].Path)
-	fmt.Printf("  Migrate SQL:  %s\n", migration.MigrateSQLFiles[0].Path)
-	fmt.Printf("  Contract SQL: %s\n", migration.ContractSQLFiles[0].Path)
-	fmt.Printf("  Config file:  %s/zdd.yaml\n", migration.Directory)
+	fmt.Printf("Created migration %s\n", migration.Directory)
 
 	return nil
 }

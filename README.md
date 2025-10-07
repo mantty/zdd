@@ -9,7 +9,6 @@ ZDD has strong opinions about how migrations should be handled:
 - **Migrations should be written in plain SQL** (no DSLs)
 - **Migrations should be idempotent**
 - **Deployments should be seamless**
-- **Migrating should be fast**
 - **We should be able to review migrations and their effects**
 - **Migrations should be roll forward** - down migrations are risky. It's better to apply new migrations if required to revert
 - **Migrations should be automatically wrapped in transactions**
@@ -20,10 +19,9 @@ ZDD has strong opinions about how migrations should be handled:
 
 - **Pre and Post SQL migrations**: Unlike most migration tools, ZDD allows both pre-deployment and post-deployment SQL
 - **Expand-Migrate-Contract pattern**: Safely handle schema changes with zero downtime
-- **Lexicographically sortable migration names**: Timestamp-based IDs ensure proper ordering
 - **Transaction safety**: All SQL files are executed within transactions
 - **Schema diffing**: Automatically generate before/after schema comparisons
-- **Numbered SQL files**: Support for `pre.1.sql`, `pre.2.sql` for batching large changes
+- **Numbered SQL files**: Support for `expand.1.sql`, `expand.2.sql` ... `expand.n.sql` for batching large changes
 - **Environment variable configuration**: All settings can be configured via environment variables
 
 ## Installation
