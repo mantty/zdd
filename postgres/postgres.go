@@ -11,14 +11,16 @@ import (
 	"github.com/mantty/zdd"
 )
 
+type (
+	// DB wraps a PostgreSQL connection pool and implements zdd.DatabaseProvider
+	DB struct {
+		pool *pgxpool.Pool
+		ctx  context.Context
+	}
+)
+
 //go:embed assets/setup_schema.sql
 var createMigrationsTableSQL string
-
-// DB wraps a PostgreSQL connection pool and implements zdd.DatabaseProvider
-type DB struct {
-	pool *pgxpool.Pool
-	ctx  context.Context
-}
 
 // NewDB creates a new PostgreSQL database connection
 func NewDB(ctx context.Context, databaseURL string) (*DB, error) {

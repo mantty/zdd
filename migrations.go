@@ -12,6 +12,63 @@ import (
 	"time"
 )
 
+type (
+	// Migration represents a single migration with its expand/migrate/contract SQL files
+	Migration struct {
+		ID               string
+		Name             string
+		CreatedAt        time.Time
+		AppliedAt        *time.Time
+		ExpandSQLFiles   []SQLFile
+		MigrateSQLFiles  []SQLFile
+		ContractSQLFiles []SQLFile
+		Directory        string
+		Config           *MigrationConfig
+	}
+
+	// SQLFile represents a single SQL file (pre or post) with optional numbering
+	SQLFile struct {
+		Path     string
+		Sequence int // For numbered files like pre.1.sql, pre.2.sql
+		Content  string
+	}
+
+	// MigrationStatus represents the status of migrations in the system
+	MigrationStatus struct {
+		Local   []Migration
+		Applied []Migration
+		Pending []Migration
+		Missing []Migration // Migrations that exist in DB but not locally
+	}
+
+	// MigrationConfig represents the configuration for a migration step
+	MigrationConfig struct {
+		Expand   *string `yaml:"expand,omitempty"`
+		Migrate  *string `yaml:"migrate,omitempty"`
+		Contract *string `yaml:"contract,omitempty"`
+		Post     *string `yaml:"post,omitempty"`
+	}
+
+	// DBMigrationRecord represents a migration record in the zdd_migrations table
+	DBMigrationRecord struct {
+		ID        string
+		Name      string
+		AppliedAt time.Time
+		Checksum  string // Optional: for integrity checking
+	}
+
+	// DatabaseProvider interface abstracts database operations
+	DatabaseProvider interface {
+		InitMigrationSchema() error
+		GetAppliedMigrations() ([]DBMigrationRecord, error)
+		GetLastAppliedMigration() (*DBMigrationRecord, error)
+		RecordMigration(migration Migration, checksum string) error
+		ExecuteSQLInTransaction(sqlStatements []string) error
+		DumpSchema() (string, error)
+		Close() error
+	}
+)
+
 const (
 	migrationDirDefault = "migrations"
 	migrationTimeFormat = "20060102150405" // YYYYMMDDHHMMSS format for lexicographic sorting

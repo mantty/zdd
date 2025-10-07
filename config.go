@@ -9,6 +9,15 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
+type (
+	// Config holds configuration for the zdd tool
+	Config struct {
+		DatabaseURL    string
+		MigrationsPath string
+		DeployCommand  string
+	}
+)
+
 //go:embed assets/zdd.yaml
 var ExampleConfigYAML string
 

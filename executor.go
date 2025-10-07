@@ -9,10 +9,17 @@ import (
 	"time"
 )
 
-// ShellCommandExecutor implements CommandExecutor for executing shell commands
-type ShellCommandExecutor struct {
-	timeout time.Duration
-}
+type (
+	// CommandExecutor interface abstracts command execution
+	CommandExecutor interface {
+		ExecuteCommand(command string, workingDir string) error
+	}
+
+	// ShellCommandExecutor implements CommandExecutor for executing shell commands
+	ShellCommandExecutor struct {
+		timeout time.Duration
+	}
+)
 
 // NewShellCommandExecutor creates a new shell command executor
 func NewShellCommandExecutor(timeout time.Duration) *ShellCommandExecutor {

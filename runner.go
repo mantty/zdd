@@ -6,13 +6,15 @@ import (
 	"strings"
 )
 
-// MigrationRunner handles the core migration execution logic
-type MigrationRunner struct {
-	db             DatabaseProvider
-	migrationsPath string
-	executor       CommandExecutor
-	config         *Config
-}
+type (
+	// MigrationRunner handles the core migration execution logic
+	MigrationRunner struct {
+		db             DatabaseProvider
+		migrationsPath string
+		executor       CommandExecutor
+		config         *Config
+	}
+)
 
 // NewMigrationRunner creates a new migration runner
 func NewMigrationRunner(db DatabaseProvider, migrationsPath string, executor CommandExecutor, config *Config) *MigrationRunner {
