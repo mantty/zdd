@@ -193,8 +193,7 @@ func (mm *MigrationManager) loadMigration(id, dirName string) (*Migration, error
 	})
 
 	// Load configuration
-	configLoader := &ConfigLoader{}
-	config, err := configLoader.LoadMigrationConfig(migrationPath)
+	config, err := LoadMigrationConfig(migrationPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load migration config: %w", err)
 	}

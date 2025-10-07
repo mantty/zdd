@@ -20,7 +20,6 @@ func TestConfigLoading(t *testing.T) {
 	}
 
 	mm := zdd.NewMigrationManager(abs)
-	loader := &zdd.ConfigLoader{}
 
 	// Load migrations to test YAML parsing
 	migrations, err := mm.LoadMigrations()
@@ -30,7 +29,7 @@ func TestConfigLoading(t *testing.T) {
 
 	for _, migration := range migrations {
 		// Test loading the YAML configuration
-		config, err := loader.LoadMigrationConfig(migration.Directory)
+		config, err := zdd.LoadMigrationConfig(migration.Directory)
 		if err != nil {
 			fmt.Printf("Error loading config: %v\n", err)
 			continue

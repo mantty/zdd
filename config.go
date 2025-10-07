@@ -12,36 +12,33 @@ import (
 //go:embed assets/zdd.yaml
 var ExampleConfigYAML string
 
-// ConfigLoader handles loading and merging of zdd.yaml configuration files
-type ConfigLoader struct{}
-
 // LoadMigrationConfig loads configuration for a specific migration
 // It first loads the default config from the migrations root directory (parent of migrationDir),
 // then loads the migration-specific config and merges them.
 // Migration-specific config takes precedence, but only for defined values.
-func (c *ConfigLoader) LoadMigrationConfig(migrationDir string) (*MigrationConfig, error) {
+func LoadMigrationConfig(migrationDir string) (*MigrationConfig, error) {
 	// Derive migrations root from migration directory (parent directory)
 	migrationsRoot := filepath.Dir(migrationDir)
 
 	// Load default config from migrations root
-	defaultConfig, err := c.loadConfigFromDir(migrationsRoot)
+	defaultConfig, err := loadConfigFromDir(migrationsRoot)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("failed to load default config: %w", err)
 	}
 
 	// Load migration-specific config
-	migrationConfig, err := c.loadConfigFromDir(migrationDir)
+	migrationConfig, err := loadConfigFromDir(migrationDir)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("failed to load migration config: %w", err)
 	}
 
 	// Merge configs - migration-specific takes precedence
-	merged := c.mergeConfigs(defaultConfig, migrationConfig)
+	merged := mergeConfigs(defaultConfig, migrationConfig)
 	return merged, nil
 }
 
 // loadConfigFromDir loads zdd.yaml from the specified directory
-func (c *ConfigLoader) loadConfigFromDir(dir string) (*MigrationConfig, error) {
+func loadConfigFromDir(dir string) (*MigrationConfig, error) {
 	configPath := filepath.Join(dir, "zdd.yaml")
 
 	data, err := os.ReadFile(configPath)
@@ -60,7 +57,7 @@ func (c *ConfigLoader) loadConfigFromDir(dir string) (*MigrationConfig, error) {
 
 // mergeConfigs merges default and migration-specific configs
 // Only uses default values when migration config values are nil (undefined)
-func (c *ConfigLoader) mergeConfigs(defaultConfig, migrationConfig *MigrationConfig) *MigrationConfig {
+func mergeConfigs(defaultConfig, migrationConfig *MigrationConfig) *MigrationConfig {
 	if defaultConfig == nil && migrationConfig == nil {
 		return &MigrationConfig{}
 	}
