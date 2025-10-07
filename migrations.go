@@ -243,9 +243,7 @@ func (mm *MigrationManager) CreateMigration(name string) (*Migration, error) {
 	}
 
 	// Create example configuration file
-	configLoader := &ConfigLoader{}
-	configContent := configLoader.GenerateExampleConfig()
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(ExampleConfigYAML), 0644); err != nil {
 		return nil, fmt.Errorf("failed to create zdd.yaml: %w", err)
 	}
 

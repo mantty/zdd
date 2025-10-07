@@ -1,12 +1,16 @@
 package zdd
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/goccy/go-yaml"
 )
+
+//go:embed assets/zdd.yaml
+var ExampleConfigYAML string
 
 // ConfigLoader handles loading and merging of zdd.yaml configuration files
 type ConfigLoader struct{}
@@ -98,24 +102,4 @@ func (c *ConfigLoader) mergeConfigs(defaultConfig, migrationConfig *MigrationCon
 	}
 
 	return merged
-}
-
-// GenerateExampleConfig creates a commented example configuration file
-func (c *ConfigLoader) GenerateExampleConfig() string {
-	return `# Expand phase: prepare database for new schema (e.g., add new columns, tables)
-# These changes should be backward compatible with the old application version
-# expand: echo 'Running expand phase command...'
-
-# Migrate phase: core schema changes (e.g., data transformations, constraints)
-# Application should typically be stopped during this phase
-# migrate: kubectl set image deployment/myapp myapp=myapp:latest
-
-# Contract phase: remove old schema elements no longer needed
-# Only run after confirming the new application version is working
-# contract: echo 'Running contract phase command...'
-
-# Post phase: validation and testing commands
-# These commands verify the deployment was successful
-# post: curl -f http://myapp/health
-`
 }
