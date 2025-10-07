@@ -74,6 +74,47 @@ func LoadMigrations(migrationsPath string) ([]Migration, error) {
 	return migrations, nil
 }
 
+// loadSQLFiles loads SQL files matching a pattern from directory entries
+func loadSQLFiles(migrationPath string, entries []os.DirEntry, pattern *regexp.Regexp, errorContext string) ([]SQLFile, error) {
+	var sqlFiles []SQLFile
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		fileName := entry.Name()
+		matches := pattern.FindStringSubmatch(fileName)
+		if matches == nil {
+			continue
+		}
+
+		sequence := 0
+		if matches[1] != "" {
+			sequence, _ = strconv.Atoi(matches[1])
+		}
+
+		filePath := filepath.Join(migrationPath, fileName)
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read %s file %s: %w", errorContext, filePath, err)
+		}
+
+		sqlFiles = append(sqlFiles, SQLFile{
+			Path:     filePath,
+			Sequence: sequence,
+			Content:  string(content),
+		})
+	}
+
+	// Sort by sequence
+	sort.Slice(sqlFiles, func(i, j int) bool {
+		return sqlFiles[i].Sequence < sqlFiles[j].Sequence
+	})
+
+	return sqlFiles, nil
+}
+
 // loadMigration loads a single migration from its directory
 func loadMigration(migrationsPath, id, dirName string) (*Migration, error) {
 	migrationPath := filepath.Join(migrationsPath, dirName)
@@ -89,97 +130,29 @@ func loadMigration(migrationsPath, id, dirName string) (*Migration, error) {
 	if len(matches) != 3 {
 		return nil, fmt.Errorf("invalid migration directory name: %s", dirName)
 	}
-	name := matches[2]
 
 	migration := &Migration{
 		ID:        id,
-		Name:      name,
+		Name:      matches[2],
 		CreatedAt: createdAt,
 		Directory: migrationPath,
 	}
 
-	// Load expand, migrate, and contract SQL files
+	// Load SQL files
 	entries, err := os.ReadDir(migrationPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read migration directory %s: %w", migrationPath, err)
 	}
 
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		fileName := entry.Name()
-		filePath := filepath.Join(migrationPath, fileName)
-
-		// Check if it's an expand SQL file
-		if matches := expandSQLPattern.FindStringSubmatch(fileName); matches != nil {
-			sequence := 0
-			if matches[1] != "" {
-				sequence, _ = strconv.Atoi(matches[1])
-			}
-
-			content, err := os.ReadFile(filePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read expand SQL file %s: %w", filePath, err)
-			}
-
-			migration.ExpandSQLFiles = append(migration.ExpandSQLFiles, SQLFile{
-				Path:     filePath,
-				Sequence: sequence,
-				Content:  string(content),
-			})
-		}
-
-		// Check if it's a migrate SQL file
-		if matches := migrateSQLPattern.FindStringSubmatch(fileName); matches != nil {
-			sequence := 0
-			if matches[1] != "" {
-				sequence, _ = strconv.Atoi(matches[1])
-			}
-
-			content, err := os.ReadFile(filePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read migrate SQL file %s: %w", filePath, err)
-			}
-
-			migration.MigrateSQLFiles = append(migration.MigrateSQLFiles, SQLFile{
-				Path:     filePath,
-				Sequence: sequence,
-				Content:  string(content),
-			})
-		}
-
-		// Check if it's a contract SQL file
-		if matches := contractSQLPattern.FindStringSubmatch(fileName); matches != nil {
-			sequence := 0
-			if matches[1] != "" {
-				sequence, _ = strconv.Atoi(matches[1])
-			}
-
-			content, err := os.ReadFile(filePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read contract SQL file %s: %w", filePath, err)
-			}
-
-			migration.ContractSQLFiles = append(migration.ContractSQLFiles, SQLFile{
-				Path:     filePath,
-				Sequence: sequence,
-				Content:  string(content),
-			})
-		}
+	if migration.ExpandSQLFiles, err = loadSQLFiles(migrationPath, entries, expandSQLPattern, "expand SQL"); err != nil {
+		return nil, err
 	}
-
-	// Sort SQL files by sequence
-	sort.Slice(migration.ExpandSQLFiles, func(i, j int) bool {
-		return migration.ExpandSQLFiles[i].Sequence < migration.ExpandSQLFiles[j].Sequence
-	})
-	sort.Slice(migration.MigrateSQLFiles, func(i, j int) bool {
-		return migration.MigrateSQLFiles[i].Sequence < migration.MigrateSQLFiles[j].Sequence
-	})
-	sort.Slice(migration.ContractSQLFiles, func(i, j int) bool {
-		return migration.ContractSQLFiles[i].Sequence < migration.ContractSQLFiles[j].Sequence
-	})
+	if migration.MigrateSQLFiles, err = loadSQLFiles(migrationPath, entries, migrateSQLPattern, "migrate SQL"); err != nil {
+		return nil, err
+	}
+	if migration.ContractSQLFiles, err = loadSQLFiles(migrationPath, entries, contractSQLPattern, "contract SQL"); err != nil {
+		return nil, err
+	}
 
 	// Load configuration
 	config, err := LoadMigrationConfig(migrationPath)
