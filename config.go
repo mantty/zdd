@@ -12,10 +12,13 @@ import (
 type ConfigLoader struct{}
 
 // LoadMigrationConfig loads configuration for a specific migration
-// It first loads the default config from the migrations root directory,
+// It first loads the default config from the migrations root directory (parent of migrationDir),
 // then loads the migration-specific config and merges them.
 // Migration-specific config takes precedence, but only for defined values.
-func (c *ConfigLoader) LoadMigrationConfig(migrationDir, migrationsRoot string) (*MigrationConfig, error) {
+func (c *ConfigLoader) LoadMigrationConfig(migrationDir string) (*MigrationConfig, error) {
+	// Derive migrations root from migration directory (parent directory)
+	migrationsRoot := filepath.Dir(migrationDir)
+
 	// Load default config from migrations root
 	defaultConfig, err := c.loadConfigFromDir(migrationsRoot)
 	if err != nil && !os.IsNotExist(err) {
@@ -66,31 +69,31 @@ func (c *ConfigLoader) mergeConfigs(defaultConfig, migrationConfig *MigrationCon
 
 	merged := &MigrationConfig{}
 
-	// Merge Expand commands
-	if len(migrationConfig.Expand) > 0 {
+	// Merge Expand command
+	if migrationConfig.Expand != nil {
 		merged.Expand = migrationConfig.Expand
-	} else if len(defaultConfig.Expand) > 0 {
+	} else if defaultConfig.Expand != nil {
 		merged.Expand = defaultConfig.Expand
 	}
 
-	// Merge Migrate commands
-	if len(migrationConfig.Migrate) > 0 {
+	// Merge Migrate command
+	if migrationConfig.Migrate != nil {
 		merged.Migrate = migrationConfig.Migrate
-	} else if len(defaultConfig.Migrate) > 0 {
+	} else if defaultConfig.Migrate != nil {
 		merged.Migrate = defaultConfig.Migrate
 	}
 
-	// Merge Contract commands
-	if len(migrationConfig.Contract) > 0 {
+	// Merge Contract command
+	if migrationConfig.Contract != nil {
 		merged.Contract = migrationConfig.Contract
-	} else if len(defaultConfig.Contract) > 0 {
+	} else if defaultConfig.Contract != nil {
 		merged.Contract = defaultConfig.Contract
 	}
 
-	// Merge Post commands
-	if len(migrationConfig.Post) > 0 {
+	// Merge Post command
+	if migrationConfig.Post != nil {
 		merged.Post = migrationConfig.Post
-	} else if len(defaultConfig.Post) > 0 {
+	} else if defaultConfig.Post != nil {
 		merged.Post = defaultConfig.Post
 	}
 
@@ -101,29 +104,18 @@ func (c *ConfigLoader) mergeConfigs(defaultConfig, migrationConfig *MigrationCon
 func (c *ConfigLoader) GenerateExampleConfig() string {
 	return `# Expand phase: prepare database for new schema (e.g., add new columns, tables)
 # These changes should be backward compatible with the old application version
-expand:
-  # - echo 'Running expand phase commands...'
-  # - npm run build
-  # - docker build -t myapp:latest .
+# expand: echo 'Running expand phase command...'
 
 # Migrate phase: core schema changes (e.g., data transformations, constraints)
 # Application should typically be stopped during this phase
-migrate:
-  # - echo 'Running migrate phase commands...'
-  # - kubectl set image deployment/myapp myapp=myapp:latest
-  # - kubectl rollout status deployment/myapp
+# migrate: kubectl set image deployment/myapp myapp=myapp:latest
 
 # Contract phase: remove old schema elements no longer needed
 # Only run after confirming the new application version is working
-contract:
-  # - echo 'Running contract phase commands...'
-  # - kubectl delete deployment/myapp-old
+# contract: echo 'Running contract phase command...'
 
 # Post phase: validation and testing commands
 # These commands verify the deployment was successful
-post:
-  # - echo 'Running post-deployment validation...'
-  # - curl -f http://myapp/health
-  # - npm run test:integration
+# post: curl -f http://myapp/health
 `
 }

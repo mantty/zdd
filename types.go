@@ -6,10 +6,10 @@ import (
 
 // MigrationConfig represents the configuration for a migration step
 type MigrationConfig struct {
-	Expand   []string `yaml:"expand,omitempty"`
-	Migrate  []string `yaml:"migrate,omitempty"`
-	Contract []string `yaml:"contract,omitempty"`
-	Post     []string `yaml:"post,omitempty"`
+	Expand   *string `yaml:"expand,omitempty"`
+	Migrate  *string `yaml:"migrate,omitempty"`
+	Contract *string `yaml:"contract,omitempty"`
+	Post     *string `yaml:"post,omitempty"`
 }
 
 // StepConfig represents configuration for a single migration step
@@ -74,5 +74,5 @@ type DatabaseProvider interface {
 
 // CommandExecutor interface abstracts command execution
 type CommandExecutor interface {
-	ExecuteCommands(commands []string, workingDir string) error
+	ExecuteCommand(command string, workingDir string) error
 }

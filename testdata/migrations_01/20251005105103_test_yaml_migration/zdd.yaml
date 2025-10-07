@@ -1,23 +1,15 @@
 # Expand phase: prepare database for new schema (e.g., add new columns, tables)
 # These changes should be backward compatible with the old application version
-expand:
-  - echo 'Running expand phase commands...'
-  - echo 'Build complete'
+expand: echo 'Running expand phase command'
 
 # Migrate phase: core schema changes (e.g., data transformations, constraints)
 # Application should typically be stopped during this phase
-migrate:
-  - echo 'Running migrate phase commands...'
-  - echo 'Deployment in progress'
+migrate: echo 'Running migrate phase command'
 
 # Contract phase: remove old schema elements no longer needed
 # Only run after confirming the new application version is working
-contract:
-  - echo 'Running contract phase commands...'
-  - echo 'Cleanup complete'
+contract: echo 'Running contract phase command'
 
 # Post phase: validation and testing commands
 # These commands verify the deployment was successful
-post:
-  - echo 'Running post-deployment validation...'
-  - echo 'Validation complete'
+post: echo 'Running post-deployment validation'

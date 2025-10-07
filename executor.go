@@ -24,33 +24,15 @@ func NewShellCommandExecutor(timeout time.Duration) *ShellCommandExecutor {
 	}
 }
 
-// ExecuteCommands executes a list of shell commands in sequence
-func (e *ShellCommandExecutor) ExecuteCommands(commands []string, workingDir string) error {
-	if len(commands) == 0 {
+// ExecuteCommand executes a single shell command
+func (e *ShellCommandExecutor) ExecuteCommand(command string, workingDir string) error {
+	if strings.TrimSpace(command) == "" {
 		return nil
 	}
 
-	log.Printf("Executing %d commands in directory: %s", len(commands), workingDir)
+	log.Printf("Executing command in directory: %s", workingDir)
+	log.Printf("Running command: %s", command)
 
-	for i, command := range commands {
-		if strings.TrimSpace(command) == "" {
-			continue
-		}
-
-		log.Printf("Running command %d/%d: %s", i+1, len(commands), command)
-
-		if err := e.executeCommand(command, workingDir); err != nil {
-			return fmt.Errorf("command %d failed (%s): %w", i+1, command, err)
-		}
-
-		log.Printf("Command %d completed successfully", i+1)
-	}
-
-	return nil
-}
-
-// executeCommand executes a single shell command with timeout
-func (e *ShellCommandExecutor) executeCommand(command, workingDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), e.timeout)
 	defer cancel()
 
@@ -71,5 +53,6 @@ func (e *ShellCommandExecutor) executeCommand(command, workingDir string) error 
 		log.Printf("Command output: %s", string(output))
 	}
 
+	log.Printf("Command completed successfully")
 	return nil
 }

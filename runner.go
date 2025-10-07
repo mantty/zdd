@@ -119,21 +119,21 @@ func (mr *MigrationRunner) applyPhase(migration Migration, phaseName string, sql
 		return fmt.Errorf("SQL execution failed: %w", err)
 	}
 
-	// Execute commands for this phase
+	// Execute command for this phase
 	if migration.Config != nil {
-		var commands []string
+		var command *string
 		switch phaseName {
 		case "expand":
-			commands = migration.Config.Expand
+			command = migration.Config.Expand
 		case "migrate":
-			commands = migration.Config.Migrate
+			command = migration.Config.Migrate
 		case "contract":
-			commands = migration.Config.Contract
+			command = migration.Config.Contract
 		}
 
-		if len(commands) > 0 {
-			fmt.Printf("Executing %s phase commands...\n", phaseName)
-			if err := mr.executor.ExecuteCommands(commands, migration.Directory); err != nil {
+		if command != nil && *command != "" {
+			fmt.Printf("Executing %s phase command...\n", phaseName)
+			if err := mr.executor.ExecuteCommand(*command, migration.Directory); err != nil {
 				return fmt.Errorf("command execution failed: %w", err)
 			}
 		}
@@ -144,9 +144,9 @@ func (mr *MigrationRunner) applyPhase(migration Migration, phaseName string, sql
 
 // applyPostPhase applies the post-validation phase
 func (mr *MigrationRunner) applyPostPhase(migration Migration) error {
-	if migration.Config != nil && len(migration.Config.Post) > 0 {
-		fmt.Println("Executing post-validation commands...")
-		if err := mr.executor.ExecuteCommands(migration.Config.Post, migration.Directory); err != nil {
+	if migration.Config != nil && migration.Config.Post != nil && *migration.Config.Post != "" {
+		fmt.Println("Executing post-validation command...")
+		if err := mr.executor.ExecuteCommand(*migration.Config.Post, migration.Directory); err != nil {
 			return fmt.Errorf("post-validation failed: %w", err)
 		}
 	}

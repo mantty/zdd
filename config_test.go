@@ -30,24 +30,24 @@ func TestConfigLoading(t *testing.T) {
 
 	for _, migration := range migrations {
 		// Test loading the YAML configuration
-		config, err := loader.LoadMigrationConfig(migration.Directory, abs)
+		config, err := loader.LoadMigrationConfig(migration.Directory)
 		if err != nil {
 			fmt.Printf("Error loading config: %v\n", err)
 			continue
 		}
 
 		// Verify that the configuration has been parsed correctly
-		if len(config.Expand) != 2 {
-			t.Errorf("Expected 2 expand commands, got %d", len(config.Expand))
+		if config.Expand == nil || *config.Expand == "" {
+			t.Errorf("Expected expand command to be set")
 		}
-		if len(config.Migrate) != 2 {
-			t.Errorf("Expected 2 migrate commands, got %d", len(config.Migrate))
+		if config.Migrate == nil || *config.Migrate == "" {
+			t.Errorf("Expected migrate command to be set")
 		}
-		if len(config.Contract) != 2 {
-			t.Errorf("Expected 2 contract commands, got %d", len(config.Contract))
+		if config.Contract == nil || *config.Contract == "" {
+			t.Errorf("Expected contract command to be set")
 		}
-		if len(config.Post) != 2 {
-			t.Errorf("Expected 2 post commands, got %d", len(config.Post))
+		if config.Post == nil || *config.Post == "" {
+			t.Errorf("Expected post command to be set")
 		}
 	}
 }
