@@ -11,7 +11,7 @@ import (
 	"github.com/mantty/zdd"
 )
 
-//go:embed setup_schema.sql
+//go:embed assets/setup_schema.sql
 var createMigrationsTableSQL string
 
 // DB wraps a PostgreSQL connection pool and implements zdd.DatabaseProvider
