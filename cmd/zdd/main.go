@@ -87,8 +87,7 @@ func createCommand(ctx context.Context, cmd *cli.Command) error {
 
 	migrationsPath := cmd.String("migrations-path")
 
-	mm := zdd.NewMigrationManager(migrationsPath)
-	migration, err := mm.CreateMigration(name)
+	migration, err := zdd.CreateMigration(migrationsPath, name)
 	if err != nil {
 		return fmt.Errorf("failed to create migration: %w", err)
 	}
@@ -105,8 +104,7 @@ func listCommand(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	// Load local migrations
-	mm := zdd.NewMigrationManager(config.MigrationsPath)
-	localMigrations, err := mm.LoadMigrations()
+	localMigrations, err := zdd.LoadMigrations(config.MigrationsPath)
 	if err != nil {
 		return fmt.Errorf("failed to load local migrations: %w", err)
 	}
@@ -131,7 +129,7 @@ func listCommand(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	// Compare migrations
-	status := mm.CompareMigrations(localMigrations, appliedMigrations)
+	status := zdd.CompareMigrations(localMigrations, appliedMigrations)
 
 	// Display results
 	fmt.Println("Migration Status:")
@@ -207,10 +205,9 @@ func migrateCommand(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("failed to initialize migration schema: %w", err)
 	}
 
-	// Create migration manager and runner
-	mm := zdd.NewMigrationManager(config.MigrationsPath)
+	// Create runner
 	executor := zdd.NewShellCommandExecutor(0) // Use default timeout
-	runner := zdd.NewMigrationRunner(db, mm, executor, config)
+	runner := zdd.NewMigrationRunner(db, config.MigrationsPath, executor, config)
 
 	// Run migrations
 	return runner.RunMigrations(ctx)

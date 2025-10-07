@@ -92,9 +92,8 @@ func createTestMigrationDir(t *testing.T) string {
 
 func TestMigrationManager_CreateMigration(t *testing.T) {
 	migrationsDir := createTestMigrationDir(t)
-	mm := zdd.NewMigrationManager(migrationsDir)
 
-	migration, err := mm.CreateMigration("test_migration")
+	migration, err := zdd.CreateMigration(migrationsDir, "test_migration")
 	if err != nil {
 		t.Fatalf("Failed to create migration: %v", err)
 	}
@@ -130,10 +129,9 @@ func TestMigrationManager_CreateMigration(t *testing.T) {
 
 func TestMigrationManager_LoadMigrations(t *testing.T) {
 	migrationsDir := createTestMigrationDir(t)
-	mm := zdd.NewMigrationManager(migrationsDir)
 
 	// Create a test migration
-	migration1, err := mm.CreateMigration("first_migration")
+	migration1, err := zdd.CreateMigration(migrationsDir, "first_migration")
 	if err != nil {
 		t.Fatalf("Failed to create first migration: %v", err)
 	}
@@ -148,13 +146,13 @@ func TestMigrationManager_LoadMigrations(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	// Create another migration
-	migration2, err := mm.CreateMigration("second_migration")
+	migration2, err := zdd.CreateMigration(migrationsDir, "second_migration")
 	if err != nil {
 		t.Fatalf("Failed to create second migration: %v", err)
 	}
 
 	// Load migrations
-	migrations, err := mm.LoadMigrations()
+	migrations, err := zdd.LoadMigrations(migrationsDir)
 	if err != nil {
 		t.Fatalf("Failed to load migrations: %v", err)
 	}
@@ -202,10 +200,9 @@ func TestDatabaseProvider_InitAndQuery(t *testing.T) {
 func TestMigrationRunner_ApplySimpleMigration(t *testing.T) {
 	db, dbURL := setupTestDB(t)
 	migrationsDir := createTestMigrationDir(t)
-	mm := zdd.NewMigrationManager(migrationsDir)
 
 	// Create a migration with SQL that creates a table
-	migration, err := mm.CreateMigration("create_users_table")
+	migration, err := zdd.CreateMigration(migrationsDir, "create_users_table")
 	if err != nil {
 		t.Fatalf("Failed to create migration: %v", err)
 	}
@@ -231,7 +228,7 @@ CREATE TABLE test_users (
 	}
 
 	executor := zdd.NewShellCommandExecutor(0)
-	runner := zdd.NewMigrationRunner(db, mm, executor, config)
+	runner := zdd.NewMigrationRunner(db, migrationsDir, executor, config)
 
 	// Run migrations
 	ctx := context.Background()
@@ -260,10 +257,9 @@ CREATE TABLE test_users (
 func TestMigrationRunner_ExpandContractPattern(t *testing.T) {
 	db, dbURL := setupTestDB(t)
 	migrationsDir := createTestMigrationDir(t)
-	mm := zdd.NewMigrationManager(migrationsDir)
 
 	// First, create a base table migration and apply it
-	baseMigration, err := mm.CreateMigration("create_base_table")
+	baseMigration, err := zdd.CreateMigration(migrationsDir, "create_base_table")
 	if err != nil {
 		t.Fatalf("Failed to create base migration: %v", err)
 	}
@@ -280,7 +276,7 @@ func TestMigrationRunner_ExpandContractPattern(t *testing.T) {
 	}
 
 	executor := zdd.NewShellCommandExecutor(0)
-	runner := zdd.NewMigrationRunner(db, mm, executor, config)
+	runner := zdd.NewMigrationRunner(db, migrationsDir, executor, config)
 	ctx := context.Background()
 
 	if err := runner.RunMigrations(ctx); err != nil {
@@ -292,7 +288,7 @@ func TestMigrationRunner_ExpandContractPattern(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	// Create an expand-contract migration and apply it separately
-	expandContractMigration, err := mm.CreateMigration("add_email_column")
+	expandContractMigration, err := zdd.CreateMigration(migrationsDir, "add_email_column")
 	if err != nil {
 		t.Fatalf("Failed to create expand-contract migration: %v", err)
 	}
@@ -338,10 +334,9 @@ func TestMigrationRunner_ExpandContractPattern(t *testing.T) {
 
 func TestMigrationValidation_MultipleExpandContract(t *testing.T) {
 	migrationsDir := createTestMigrationDir(t)
-	mm := zdd.NewMigrationManager(migrationsDir)
 
 	// Create two migrations, both with pre and post SQL
-	migration1, err := mm.CreateMigration("first_expand_contract")
+	migration1, err := zdd.CreateMigration(migrationsDir, "first_expand_contract")
 	if err != nil {
 		t.Fatalf("Failed to create first migration: %v", err)
 	}
@@ -349,7 +344,7 @@ func TestMigrationValidation_MultipleExpandContract(t *testing.T) {
 	// Wait to ensure different timestamps
 	time.Sleep(1 * time.Second)
 
-	migration2, err := mm.CreateMigration("second_expand_contract")
+	migration2, err := zdd.CreateMigration(migrationsDir, "second_expand_contract")
 	if err != nil {
 		t.Fatalf("Failed to create second migration: %v", err)
 	}
@@ -367,7 +362,7 @@ func TestMigrationValidation_MultipleExpandContract(t *testing.T) {
 	}
 
 	// Load migrations and validate - should fail
-	migrations, err := mm.LoadMigrations()
+	migrations, err := zdd.LoadMigrations(migrationsDir)
 	if err != nil {
 		t.Fatalf("Failed to load migrations: %v", err)
 	}
@@ -376,7 +371,7 @@ func TestMigrationValidation_MultipleExpandContract(t *testing.T) {
 		t.Fatalf("Expected 2 migrations, got %d", len(migrations))
 	}
 
-	if err := mm.ValidateOutstandingMigrations(migrations); err == nil {
+	if err := zdd.ValidateOutstandingMigrations(migrations); err == nil {
 		t.Error("Expected validation error for multiple expand-contract migrations")
 	}
 }

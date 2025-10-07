@@ -19,10 +19,8 @@ func TestConfigLoading(t *testing.T) {
 		log.Fatalf("Failed to resolve migrations path: %v", err)
 	}
 
-	mm := zdd.NewMigrationManager(abs)
-
 	// Load migrations to test YAML parsing
-	migrations, err := mm.LoadMigrations()
+	migrations, err := zdd.LoadMigrations(abs)
 	if err != nil {
 		log.Fatalf("Failed to load migrations: %v", err)
 	}

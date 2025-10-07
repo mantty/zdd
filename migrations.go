@@ -25,28 +25,17 @@ var (
 	contractSQLPattern   = regexp.MustCompile(`^contract(?:\.(\d+))?\.sql$`)
 )
 
-// MigrationManager handles migration file operations
-type MigrationManager struct {
-	migrationsPath string
-}
-
-// NewMigrationManager creates a new migration manager
-func NewMigrationManager(migrationsPath string) *MigrationManager {
+// LoadMigrations scans the migrations directory and loads all migrations
+func LoadMigrations(migrationsPath string) ([]Migration, error) {
 	if migrationsPath == "" {
 		migrationsPath = migrationDirDefault
 	}
-	return &MigrationManager{
-		migrationsPath: migrationsPath,
-	}
-}
 
-// LoadMigrations scans the migrations directory and loads all migrations
-func (mm *MigrationManager) LoadMigrations() ([]Migration, error) {
-	if _, err := os.Stat(mm.migrationsPath); os.IsNotExist(err) {
+	if _, err := os.Stat(migrationsPath); os.IsNotExist(err) {
 		return []Migration{}, nil // Return empty if migrations directory doesn't exist
 	}
 
-	entries, err := os.ReadDir(mm.migrationsPath)
+	entries, err := os.ReadDir(migrationsPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read migrations directory: %w", err)
 	}
@@ -70,7 +59,7 @@ func (mm *MigrationManager) LoadMigrations() ([]Migration, error) {
 
 	var migrations []Migration
 	for id, dirName := range migrationDirs {
-		migration, err := mm.loadMigration(id, dirName)
+		migration, err := loadMigration(migrationsPath, id, dirName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load migration %s: %w", id, err)
 		}
@@ -86,8 +75,8 @@ func (mm *MigrationManager) LoadMigrations() ([]Migration, error) {
 }
 
 // loadMigration loads a single migration from its directory
-func (mm *MigrationManager) loadMigration(id, dirName string) (*Migration, error) {
-	migrationPath := filepath.Join(mm.migrationsPath, dirName)
+func loadMigration(migrationsPath, id, dirName string) (*Migration, error) {
+	migrationPath := filepath.Join(migrationsPath, dirName)
 
 	// Parse timestamp from ID
 	createdAt, err := time.Parse(migrationTimeFormat, id)
@@ -203,7 +192,11 @@ func (mm *MigrationManager) loadMigration(id, dirName string) (*Migration, error
 }
 
 // CreateMigration creates a new migration directory with the given name
-func (mm *MigrationManager) CreateMigration(name string) (*Migration, error) {
+func CreateMigration(migrationsPath, name string) (*Migration, error) {
+	if migrationsPath == "" {
+		migrationsPath = migrationDirDefault
+	}
+
 	// Sanitize name
 	name = strings.ReplaceAll(name, " ", "_")
 	name = strings.ToLower(name)
@@ -211,10 +204,10 @@ func (mm *MigrationManager) CreateMigration(name string) (*Migration, error) {
 	// Generate timestamp-based ID
 	id := time.Now().Format(migrationTimeFormat)
 	dirName := fmt.Sprintf("%s_%s", id, name)
-	migrationPath := filepath.Join(mm.migrationsPath, dirName)
+	migrationPath := filepath.Join(migrationsPath, dirName)
 
 	// Create migrations directory if it doesn't exist
-	if err := os.MkdirAll(mm.migrationsPath, 0755); err != nil {
+	if err := os.MkdirAll(migrationsPath, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create migrations directory: %w", err)
 	}
 
@@ -274,7 +267,7 @@ func (mm *MigrationManager) CreateMigration(name string) (*Migration, error) {
 }
 
 // CompareMigrations compares local migrations with applied migrations and returns status
-func (mm *MigrationManager) CompareMigrations(local []Migration, applied []DBMigrationRecord) *MigrationStatus {
+func CompareMigrations(local []Migration, applied []DBMigrationRecord) *MigrationStatus {
 	appliedMap := make(map[string]DBMigrationRecord)
 	for _, m := range applied {
 		appliedMap[m.ID] = m
@@ -323,7 +316,7 @@ func (mm *MigrationManager) CompareMigrations(local []Migration, applied []DBMig
 }
 
 // CalculateChecksum calculates a checksum for a migration based on its SQL content
-func (mm *MigrationManager) CalculateChecksum(migration Migration) string {
+func CalculateChecksum(migration Migration) string {
 	hasher := sha256.New()
 
 	// Include expand SQL files
@@ -345,7 +338,7 @@ func (mm *MigrationManager) CalculateChecksum(migration Migration) string {
 }
 
 // HasNonEmptyExpandSQL checks if migration has non-empty expand SQL
-func (mm *MigrationManager) HasNonEmptyExpandSQL(migration Migration) bool {
+func HasNonEmptyExpandSQL(migration Migration) bool {
 	for _, sqlFile := range migration.ExpandSQLFiles {
 		content := strings.TrimSpace(sqlFile.Content)
 		if content != "" &&
@@ -364,7 +357,7 @@ func (mm *MigrationManager) HasNonEmptyExpandSQL(migration Migration) bool {
 }
 
 // HasNonEmptyMigrateSQL checks if migration has non-empty migrate SQL
-func (mm *MigrationManager) HasNonEmptyMigrateSQL(migration Migration) bool {
+func HasNonEmptyMigrateSQL(migration Migration) bool {
 	for _, sqlFile := range migration.MigrateSQLFiles {
 		content := strings.TrimSpace(sqlFile.Content)
 		if content != "" &&
@@ -383,7 +376,7 @@ func (mm *MigrationManager) HasNonEmptyMigrateSQL(migration Migration) bool {
 }
 
 // HasNonEmptyContractSQL checks if migration has non-empty contract SQL
-func (mm *MigrationManager) HasNonEmptyContractSQL(migration Migration) bool {
+func HasNonEmptyContractSQL(migration Migration) bool {
 	for _, sqlFile := range migration.ContractSQLFiles {
 		content := strings.TrimSpace(sqlFile.Content)
 		if content != "" &&
@@ -403,13 +396,13 @@ func (mm *MigrationManager) HasNonEmptyContractSQL(migration Migration) bool {
 
 // ValidateOutstandingMigrations validates that there's at most one migration with expand/migrate/contract
 // after the last applied migration
-func (mm *MigrationManager) ValidateOutstandingMigrations(pending []Migration) error {
+func ValidateOutstandingMigrations(pending []Migration) error {
 	migrationsWithExpandContract := 0
 
 	for _, migration := range pending {
-		hasExpandSQL := mm.HasNonEmptyExpandSQL(migration)
-		hasMigrateSQL := mm.HasNonEmptyMigrateSQL(migration)
-		hasContractSQL := mm.HasNonEmptyContractSQL(migration)
+		hasExpandSQL := HasNonEmptyExpandSQL(migration)
+		hasMigrateSQL := HasNonEmptyMigrateSQL(migration)
+		hasContractSQL := HasNonEmptyContractSQL(migration)
 
 		if hasExpandSQL || hasMigrateSQL || hasContractSQL {
 			migrationsWithExpandContract++

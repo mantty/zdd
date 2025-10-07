@@ -8,26 +8,26 @@ import (
 
 // MigrationRunner handles the core migration execution logic
 type MigrationRunner struct {
-	db               DatabaseProvider
-	migrationManager *MigrationManager
-	executor         CommandExecutor
-	config           *Config
+	db             DatabaseProvider
+	migrationsPath string
+	executor       CommandExecutor
+	config         *Config
 }
 
 // NewMigrationRunner creates a new migration runner
-func NewMigrationRunner(db DatabaseProvider, migrationManager *MigrationManager, executor CommandExecutor, config *Config) *MigrationRunner {
+func NewMigrationRunner(db DatabaseProvider, migrationsPath string, executor CommandExecutor, config *Config) *MigrationRunner {
 	return &MigrationRunner{
-		db:               db,
-		migrationManager: migrationManager,
-		executor:         executor,
-		config:           config,
+		db:             db,
+		migrationsPath: migrationsPath,
+		executor:       executor,
+		config:         config,
 	}
 }
 
 // RunMigrations executes the full migration process
 func (mr *MigrationRunner) RunMigrations(ctx context.Context) error {
 	// 1. Load local migrations
-	localMigrations, err := mr.migrationManager.LoadMigrations()
+	localMigrations, err := LoadMigrations(mr.migrationsPath)
 	if err != nil {
 		return fmt.Errorf("failed to load local migrations: %w", err)
 	}
@@ -39,10 +39,10 @@ func (mr *MigrationRunner) RunMigrations(ctx context.Context) error {
 	}
 
 	// 3. Compare and get migration status
-	status := mr.migrationManager.CompareMigrations(localMigrations, appliedMigrations)
+	status := CompareMigrations(localMigrations, appliedMigrations)
 
 	// 4. Validate outstanding migrations
-	if err := mr.migrationManager.ValidateOutstandingMigrations(status.Pending); err != nil {
+	if err := ValidateOutstandingMigrations(status.Pending); err != nil {
 		return fmt.Errorf("migration validation failed: %w", err)
 	}
 
@@ -103,7 +103,7 @@ func (mr *MigrationRunner) applyMigrationWithPhases(ctx context.Context, migrati
 	}
 
 	// Record migration as applied
-	checksum := mr.migrationManager.CalculateChecksum(migration)
+	checksum := CalculateChecksum(migration)
 	if err := mr.db.RecordMigration(migration, checksum); err != nil {
 		return fmt.Errorf("failed to record migration: %w", err)
 	}
