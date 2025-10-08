@@ -3,7 +3,6 @@ package zdd
 import (
 	"context"
 	"fmt"
-	"strings"
 )
 
 type (
@@ -12,17 +11,15 @@ type (
 		db             DatabaseProvider
 		migrationsPath string
 		executor       CommandExecutor
-		config         *Config
 	}
 )
 
 // NewMigrationRunner creates a new migration runner
-func NewMigrationRunner(db DatabaseProvider, migrationsPath string, executor CommandExecutor, config *Config) *MigrationRunner {
+func NewMigrationRunner(db DatabaseProvider, migrationsPath string, executor CommandExecutor) *MigrationRunner {
 	return &MigrationRunner{
 		db:             db,
 		migrationsPath: migrationsPath,
 		executor:       executor,
-		config:         config,
 	}
 }
 
@@ -60,8 +57,9 @@ func (mr *MigrationRunner) RunMigrations(ctx context.Context) error {
 	}
 
 	// 6. Apply all pending migrations using expand-migrate-contract workflow
-	for _, migration := range status.Pending {
-		if err := mr.applyMigrationWithPhases(ctx, migration); err != nil {
+	for i, migration := range status.Pending {
+		isHead := i == len(status.Pending)-1 // Last migration is the head
+		if err := mr.applyMigrationWithPhases(ctx, migration, isHead); err != nil {
 			return fmt.Errorf("failed to apply migration %s: %w", migration.ID, err)
 		}
 	}
@@ -81,26 +79,26 @@ func (mr *MigrationRunner) RunMigrations(ctx context.Context) error {
 }
 
 // applyMigrationWithPhases applies a migration using the expand-migrate-contract workflow
-func (mr *MigrationRunner) applyMigrationWithPhases(ctx context.Context, migration Migration) error {
+func (mr *MigrationRunner) applyMigrationWithPhases(ctx context.Context, migration Migration, isHead bool) error {
 	fmt.Printf("Applying migration %s: %s\n", migration.ID, migration.Name)
 
 	// Phase 1: Expand - Prepare database for new schema
-	if err := mr.applyPhase(migration, "expand", migration.ExpandSQLFiles); err != nil {
+	if err := mr.applyPhase(migration, "expand", migration.ExpandScript, migration.ExpandSQLFiles, isHead); err != nil {
 		return fmt.Errorf("expand phase failed: %w", err)
 	}
 
 	// Phase 2: Migrate - Core schema changes
-	if err := mr.applyPhase(migration, "migrate", migration.MigrateSQLFiles); err != nil {
+	if err := mr.applyPhase(migration, "migrate", migration.MigrateScript, migration.MigrateSQLFiles, isHead); err != nil {
 		return fmt.Errorf("migrate phase failed: %w", err)
 	}
 
 	// Phase 3: Contract - Remove old schema elements
-	if err := mr.applyPhase(migration, "contract", migration.ContractSQLFiles); err != nil {
+	if err := mr.applyPhase(migration, "contract", migration.ContractScript, migration.ContractSQLFiles, isHead); err != nil {
 		return fmt.Errorf("contract phase failed: %w", err)
 	}
 
 	// Phase 4: Post - Validation and testing
-	if err := mr.applyPostPhase(migration); err != nil {
+	if err := mr.applyPostPhase(migration, isHead); err != nil {
 		return fmt.Errorf("post phase failed: %w", err)
 	}
 
@@ -115,82 +113,79 @@ func (mr *MigrationRunner) applyMigrationWithPhases(ctx context.Context, migrati
 }
 
 // applyPhase applies a specific phase (expand, migrate, or contract)
-func (mr *MigrationRunner) applyPhase(migration Migration, phaseName string, sqlFiles []SQLFile) error {
+func (mr *MigrationRunner) applyPhase(migration Migration, phaseName string, script *ScriptFile, sqlFiles []SQLFile, isHead bool) error {
+	// Execute shell script before SQL (if exists)
+	if script != nil {
+		if err := mr.executeScript(script, migration, phaseName, isHead); err != nil {
+			return fmt.Errorf("script execution failed: %w", err)
+		}
+	}
+
 	// Apply SQL files if they exist
 	if err := mr.applySQLFiles(sqlFiles, phaseName); err != nil {
 		return fmt.Errorf("SQL execution failed: %w", err)
-	}
-
-	// Execute command for this phase
-	if migration.Config != nil {
-		var command *string
-		switch phaseName {
-		case "expand":
-			command = migration.Config.Expand
-		case "migrate":
-			command = migration.Config.Migrate
-		case "contract":
-			command = migration.Config.Contract
-		}
-
-		if command != nil && *command != "" {
-			fmt.Printf("Executing %s phase command...\n", phaseName)
-			if err := mr.executor.ExecuteCommand(*command, migration.Directory); err != nil {
-				return fmt.Errorf("command execution failed: %w", err)
-			}
-		}
 	}
 
 	return nil
 }
 
 // applyPostPhase applies the post-validation phase
-func (mr *MigrationRunner) applyPostPhase(migration Migration) error {
-	if migration.Config != nil && migration.Config.Post != nil && *migration.Config.Post != "" {
-		fmt.Println("Executing post-validation command...")
-		if err := mr.executor.ExecuteCommand(*migration.Config.Post, migration.Directory); err != nil {
+func (mr *MigrationRunner) applyPostPhase(migration Migration, isHead bool) error {
+	if migration.PostScript != nil {
+		if err := mr.executeScript(migration.PostScript, migration, "post", isHead); err != nil {
 			return fmt.Errorf("post-validation failed: %w", err)
 		}
 	}
 	return nil
 }
 
+// executeScript executes a shell script with ZDD environment variables
+func (mr *MigrationRunner) executeScript(script *ScriptFile, migration Migration, phase string, isHead bool) error {
+	// Set environment variables
+	env := map[string]string{
+		"ZDD_IS_HEAD":         fmt.Sprintf("%t", isHead),
+		"ZDD_MIGRATION_ID":    migration.ID,
+		"ZDD_MIGRATION_NAME":  migration.Name,
+		"ZDD_PHASE":           phase,
+		"ZDD_MIGRATIONS_PATH": mr.migrationsPath,
+	}
+
+	scriptType := "migration-specific"
+	if script.IsDefault {
+		scriptType = "default"
+	}
+
+	fmt.Printf("  Executing %s %s script: %s\n", scriptType, phase, script.Path)
+
+	if err := mr.executor.ExecuteCommandWithEnv(script.Path, migration.Directory, env); err != nil {
+		return fmt.Errorf("failed to execute script: %w", err)
+	}
+
+	return nil
+}
+
 // applySQLFiles applies a sequence of SQL files in order
 func (mr *MigrationRunner) applySQLFiles(sqlFiles []SQLFile, phase string) error {
+	// Skip if there's no actual SQL content (just comments/whitespace)
+	if !HasNonEmptySQL(sqlFiles) {
+		return nil
+	}
+
 	for _, sqlFile := range sqlFiles {
-		content := strings.TrimSpace(sqlFile.Content)
-		if content == "" ||
-			strings.HasPrefix(content, "-- Expand phase SQL (optional)") ||
-			strings.HasPrefix(content, "-- Migrate phase SQL (optional)") ||
-			strings.HasPrefix(content, "-- Contract phase SQL (optional)") {
-			continue // Skip empty or template files
+		// Check if this individual file has actual SQL (not just comments)
+		if !HasNonEmptySQL([]SQLFile{sqlFile}) {
+			continue // Skip files with only comments/whitespace
 		}
 
 		fmt.Printf("  Executing %s SQL file: %s\n", phase, sqlFile.Path)
 
-		// Split content by semicolons for individual statements
-		statements := mr.splitSQLStatements(content)
-		if err := mr.db.ExecuteSQLInTransaction(statements); err != nil {
+		// Execute the entire SQL file content as-is
+		// PostgreSQL can handle multiple statements and comments natively
+		if err := mr.db.ExecuteSQLInTransaction([]string{sqlFile.Content}); err != nil {
 			return fmt.Errorf("failed to execute %s SQL file %s: %w", phase, sqlFile.Path, err)
 		}
 	}
 	return nil
-}
-
-// splitSQLStatements splits SQL content into individual statements
-func (mr *MigrationRunner) splitSQLStatements(content string) []string {
-	// Simple splitting by semicolon - this could be enhanced for more complex SQL
-	statements := strings.Split(content, ";")
-	var cleaned []string
-
-	for _, stmt := range statements {
-		stmt = strings.TrimSpace(stmt)
-		if stmt != "" && !strings.HasPrefix(stmt, "--") {
-			cleaned = append(cleaned, stmt)
-		}
-	}
-
-	return cleaned
 }
 
 // generateSchemaDiff generates and saves a diff of the schema changes

@@ -98,21 +98,28 @@ func createCommand(ctx context.Context, cmd *cli.Command) error {
 }
 
 func listCommand(ctx context.Context, cmd *cli.Command) error {
-	config, err := getConfig(cmd)
-	if err != nil {
-		return err
+	migrationsPath := cmd.String("migrations-path")
+	databaseURL := cmd.String("database-url")
+
+	// Convert relative migrations path to absolute
+	if migrationsPath != "" && !filepath.IsAbs(migrationsPath) {
+		abs, err := filepath.Abs(migrationsPath)
+		if err != nil {
+			return fmt.Errorf("failed to resolve migrations path: %w", err)
+		}
+		migrationsPath = abs
 	}
 
 	// Load local migrations
-	localMigrations, err := zdd.LoadMigrations(config.MigrationsPath)
+	localMigrations, err := zdd.LoadMigrations(migrationsPath)
 	if err != nil {
 		return fmt.Errorf("failed to load local migrations: %w", err)
 	}
 
 	// Connect to database and get applied migrations
 	var appliedMigrations []zdd.DBMigrationRecord
-	if config.DatabaseURL != "" {
-		db, err := postgres.NewDB(ctx, config.DatabaseURL)
+	if databaseURL != "" {
+		db, err := postgres.NewDB(ctx, databaseURL)
 		if err != nil {
 			return fmt.Errorf("failed to connect to database: %w", err)
 		}
@@ -184,17 +191,24 @@ func listCommand(ctx context.Context, cmd *cli.Command) error {
 }
 
 func migrateCommand(ctx context.Context, cmd *cli.Command) error {
-	config, err := getConfig(cmd)
-	if err != nil {
-		return err
+	migrationsPath := cmd.String("migrations-path")
+	databaseURL := cmd.String("database-url")
+
+	// Convert relative migrations path to absolute
+	if migrationsPath != "" && !filepath.IsAbs(migrationsPath) {
+		abs, err := filepath.Abs(migrationsPath)
+		if err != nil {
+			return fmt.Errorf("failed to resolve migrations path: %w", err)
+		}
+		migrationsPath = abs
 	}
 
-	if config.DatabaseURL == "" {
+	if databaseURL == "" {
 		return fmt.Errorf("database URL is required for migrations")
 	}
 
 	// Connect to database
-	db, err := postgres.NewDB(ctx, config.DatabaseURL)
+	db, err := postgres.NewDB(ctx, databaseURL)
 	if err != nil {
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -207,29 +221,8 @@ func migrateCommand(ctx context.Context, cmd *cli.Command) error {
 
 	// Create runner
 	executor := zdd.NewShellCommandExecutor(0) // Use default timeout
-	runner := zdd.NewMigrationRunner(db, config.MigrationsPath, executor, config)
+	runner := zdd.NewMigrationRunner(db, migrationsPath, executor)
 
 	// Run migrations
 	return runner.RunMigrations(ctx)
-}
-
-func getConfig(cmd *cli.Command) (*zdd.Config, error) {
-	databaseURL := cmd.String("database-url")
-	migrationsPath := cmd.String("migrations-path")
-	deployCommand := cmd.String("deploy-command")
-
-	// Convert relative migrations path to absolute
-	if migrationsPath != "" && !filepath.IsAbs(migrationsPath) {
-		abs, err := filepath.Abs(migrationsPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve migrations path: %w", err)
-		}
-		migrationsPath = abs
-	}
-
-	return &zdd.Config{
-		DatabaseURL:    databaseURL,
-		MigrationsPath: migrationsPath,
-		DeployCommand:  deployCommand,
-	}, nil
 }

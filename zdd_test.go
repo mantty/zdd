@@ -2,8 +2,10 @@ package zdd_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,7 +200,7 @@ func TestDatabaseProvider_InitAndQuery(t *testing.T) {
 }
 
 func TestMigrationRunner_ApplySimpleMigration(t *testing.T) {
-	db, dbURL := setupTestDB(t)
+	db, _ := setupTestDB(t)
 	migrationsDir := createTestMigrationDir(t)
 
 	// Create a migration with SQL that creates a table
@@ -220,15 +222,9 @@ CREATE TABLE test_users (
 		t.Fatalf("Failed to write SQL: %v", err)
 	}
 
-	// Create config and runner
-	config := &zdd.Config{
-		DatabaseURL:    dbURL,
-		MigrationsPath: migrationsDir,
-		DeployCommand:  "",
-	}
-
+	// Create runner
 	executor := zdd.NewShellCommandExecutor(0)
-	runner := zdd.NewMigrationRunner(db, migrationsDir, executor, config)
+	runner := zdd.NewMigrationRunner(db, migrationsDir, executor)
 
 	// Run migrations
 	ctx := context.Background()
@@ -255,7 +251,7 @@ CREATE TABLE test_users (
 }
 
 func TestMigrationRunner_ExpandContractPattern(t *testing.T) {
-	db, dbURL := setupTestDB(t)
+	db, _ := setupTestDB(t)
 	migrationsDir := createTestMigrationDir(t)
 
 	// First, create a base table migration and apply it
@@ -269,14 +265,8 @@ func TestMigrationRunner_ExpandContractPattern(t *testing.T) {
 		t.Fatalf("Failed to write base SQL: %v", err)
 	}
 
-	config := &zdd.Config{
-		DatabaseURL:    dbURL,
-		MigrationsPath: migrationsDir,
-		DeployCommand:  "",
-	}
-
 	executor := zdd.NewShellCommandExecutor(0)
-	runner := zdd.NewMigrationRunner(db, migrationsDir, executor, config)
+	runner := zdd.NewMigrationRunner(db, migrationsDir, executor)
 	ctx := context.Background()
 
 	if err := runner.RunMigrations(ctx); err != nil {
@@ -332,46 +322,121 @@ func TestMigrationRunner_ExpandContractPattern(t *testing.T) {
 	}
 }
 
-func TestMigrationValidation_MultipleExpandContract(t *testing.T) {
-	migrationsDir := createTestMigrationDir(t)
+// TestMigrationBundles is a table-driven test that discovers and runs migration test bundles
+func TestMigrationBundles(t *testing.T) {
+	testdataDir := "testdata"
 
-	// Create two migrations, both with pre and post SQL
-	migration1, err := zdd.CreateMigration(migrationsDir, "first_expand_contract")
+	// Discover all test bundles
+	entries, err := os.ReadDir(testdataDir)
 	if err != nil {
-		t.Fatalf("Failed to create first migration: %v", err)
+		t.Fatalf("Failed to read testdata directory: %v", err)
 	}
 
-	// Wait to ensure different timestamps
-	time.Sleep(1 * time.Second)
-
-	migration2, err := zdd.CreateMigration(migrationsDir, "second_expand_contract")
-	if err != nil {
-		t.Fatalf("Failed to create second migration: %v", err)
-	}
-
-	// Add SQL to both pre and post files for both migrations
-	testSQL := "SELECT 1;"
-
-	for _, migration := range []*zdd.Migration{migration1, migration2} {
-		if err := os.WriteFile(migration.ExpandSQLFiles[0].Path, []byte(testSQL), 0644); err != nil {
-			t.Fatalf("Failed to write pre SQL: %v", err)
+	var testCases []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
 		}
-		if err := os.WriteFile(migration.ContractSQLFiles[0].Path, []byte(testSQL), 0644); err != nil {
-			t.Fatalf("Failed to write post SQL: %v", err)
+
+		// Check if this directory has an expected_schema.sql file
+		bundlePath := filepath.Join(testdataDir, entry.Name())
+		expectedSchemaPath := filepath.Join(bundlePath, "expected_schema.sql")
+
+		if _, err := os.Stat(expectedSchemaPath); err == nil {
+			testCases = append(testCases, bundlePath)
 		}
 	}
 
-	// Load migrations and validate - should fail
-	migrations, err := zdd.LoadMigrations(migrationsDir)
+	if len(testCases) == 0 {
+		t.Skip("No test bundles found (directories with expected_schema.sql)")
+	}
+
+	for _, bundlePath := range testCases {
+		bundleName := filepath.Base(bundlePath)
+
+		t.Run(bundleName, func(t *testing.T) {
+			runMigrationBundleTest(t, bundlePath)
+		})
+	}
+}
+
+// runMigrationBundleTest executes a single migration bundle test
+func runMigrationBundleTest(t *testing.T, bundlePath string) {
+	// Setup test database
+	db, _ := setupTestDB(t)
+	defer db.Close()
+
+	// Get absolute path
+	absBundlePath, _ := filepath.Abs(bundlePath)
+
+	// Create runner
+	executor := zdd.NewShellCommandExecutor(0)
+	runner := zdd.NewMigrationRunner(db, absBundlePath, executor)
+
+	// Run migrations
+	ctx := context.Background()
+	err := runner.RunMigrations(ctx)
+
 	if err != nil {
-		t.Fatalf("Failed to load migrations: %v", err)
+		t.Fatalf("Migration failed: %v", err)
 	}
 
-	if len(migrations) != 2 {
-		t.Fatalf("Expected 2 migrations, got %d", len(migrations))
+	// Validate full schema against expected_schema.sql
+	expectedSchemaPath := filepath.Join(bundlePath, "expected_schema.sql")
+	expectedSchemaBytes, err := os.ReadFile(expectedSchemaPath)
+
+	actualSchema, err2 := db.DumpSchema()
+	if err2 != nil {
+		t.Fatalf("Failed to dump schema: %v", err2)
+	}
+	actualSchema = strings.TrimSpace(actualSchema)
+
+	if err != nil {
+		// Expected schema file doesn't exist - print actual schema to help create it
+		t.Fatalf("Failed to read expected schema file: %v\n\nActual schema (copy this to %s):\n%s",
+			err, expectedSchemaPath, actualSchema)
 	}
 
-	if err := zdd.ValidateOutstandingMigrations(migrations); err == nil {
-		t.Error("Expected validation error for multiple expand-contract migrations")
+	expectedSchema := strings.TrimSpace(string(expectedSchemaBytes))
+
+	if actualSchema != expectedSchema {
+		t.Errorf("Schema mismatch!\n\nExpected:\n%s\n\nActual:\n%s\n\nDiff:\n%s",
+			expectedSchema, actualSchema, generateSchemaDiff(expectedSchema, actualSchema))
 	}
+}
+
+// generateSchemaDiff creates a simple line-by-line diff of two schemas
+func generateSchemaDiff(expected, actual string) string {
+	expectedLines := strings.Split(expected, "\n")
+	actualLines := strings.Split(actual, "\n")
+
+	var diff strings.Builder
+	maxLines := len(expectedLines)
+	if len(actualLines) > maxLines {
+		maxLines = len(actualLines)
+	}
+
+	for i := 0; i < maxLines; i++ {
+		var expLine, actLine string
+		if i < len(expectedLines) {
+			expLine = expectedLines[i]
+		}
+		if i < len(actualLines) {
+			actLine = actualLines[i]
+		}
+
+		if expLine != actLine {
+			if expLine != "" {
+				diff.WriteString(fmt.Sprintf("- %s\n", expLine))
+			}
+			if actLine != "" {
+				diff.WriteString(fmt.Sprintf("+ %s\n", actLine))
+			}
+		}
+	}
+
+	if diff.Len() == 0 {
+		return "(no differences found - likely whitespace)"
+	}
+	return diff.String()
 }

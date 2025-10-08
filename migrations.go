@@ -2,6 +2,7 @@ package zdd
 
 import (
 	"crypto/sha256"
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,20 @@ import (
 	"strconv"
 	"strings"
 	"time"
+)
+
+var (
+	//go:embed assets/expand.sh
+	expandScriptTemplate string
+
+	//go:embed assets/migrate.sh
+	migrateScriptTemplate string
+
+	//go:embed assets/contract.sh
+	contractScriptTemplate string
+
+	//go:embed assets/post.sh
+	postScriptTemplate string
 )
 
 type (
@@ -22,8 +37,11 @@ type (
 		ExpandSQLFiles   []SQLFile
 		MigrateSQLFiles  []SQLFile
 		ContractSQLFiles []SQLFile
+		ExpandScript     *ScriptFile
+		MigrateScript    *ScriptFile
+		ContractScript   *ScriptFile
+		PostScript       *ScriptFile
 		Directory        string
-		Config           *MigrationConfig
 	}
 
 	// SQLFile represents a single SQL file (pre or post) with optional numbering
@@ -33,20 +51,19 @@ type (
 		Content  string
 	}
 
+	// ScriptFile represents a shell script file
+	ScriptFile struct {
+		Path      string
+		Content   string
+		IsDefault bool // True if this is a fallback from root directory
+	}
+
 	// MigrationStatus represents the status of migrations in the system
 	MigrationStatus struct {
 		Local   []Migration
 		Applied []Migration
 		Pending []Migration
 		Missing []Migration // Migrations that exist in DB but not locally
-	}
-
-	// MigrationConfig represents the configuration for a migration step
-	MigrationConfig struct {
-		Expand   *string `yaml:"expand,omitempty"`
-		Migrate  *string `yaml:"migrate,omitempty"`
-		Contract *string `yaml:"contract,omitempty"`
-		Post     *string `yaml:"post,omitempty"`
 	}
 
 	// DBMigrationRecord represents a migration record in the zdd_migrations table
@@ -97,6 +114,12 @@ func LoadMigrations(migrationsPath string) ([]Migration, error) {
 		return nil, fmt.Errorf("failed to read migrations directory: %w", err)
 	}
 
+	// Load default scripts from root migrations directory
+	defaultExpandScript := loadDefaultScript(migrationsPath, "expand.sh")
+	defaultMigrateScript := loadDefaultScript(migrationsPath, "migrate.sh")
+	defaultContractScript := loadDefaultScript(migrationsPath, "contract.sh")
+	defaultPostScript := loadDefaultScript(migrationsPath, "post.sh")
+
 	migrationDirs := make(map[string]string) // id -> directory name
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -120,6 +143,21 @@ func LoadMigrations(migrationsPath string) ([]Migration, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load migration %s: %w", id, err)
 		}
+
+		// Apply default scripts as fallbacks
+		if migration.ExpandScript == nil && defaultExpandScript != nil {
+			migration.ExpandScript = defaultExpandScript
+		}
+		if migration.MigrateScript == nil && defaultMigrateScript != nil {
+			migration.MigrateScript = defaultMigrateScript
+		}
+		if migration.ContractScript == nil && defaultContractScript != nil {
+			migration.ContractScript = defaultContractScript
+		}
+		if migration.PostScript == nil && defaultPostScript != nil {
+			migration.PostScript = defaultPostScript
+		}
+
 		migrations = append(migrations, *migration)
 	}
 
@@ -172,6 +210,38 @@ func loadSQLFiles(migrationPath string, entries []os.DirEntry, pattern *regexp.R
 	return sqlFiles, nil
 }
 
+// loadScript loads a shell script from a directory, returns nil if not found
+func loadScript(dir, filename string) *ScriptFile {
+	filePath := filepath.Join(dir, filename)
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		// Script doesn't exist, which is fine
+		return nil
+	}
+
+	return &ScriptFile{
+		Path:      filePath,
+		Content:   string(content),
+		IsDefault: false,
+	}
+}
+
+// loadDefaultScript loads a default shell script from the migrations root directory
+func loadDefaultScript(migrationsPath, filename string) *ScriptFile {
+	filePath := filepath.Join(migrationsPath, filename)
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		// Default script doesn't exist, which is fine
+		return nil
+	}
+
+	return &ScriptFile{
+		Path:      filePath,
+		Content:   string(content),
+		IsDefault: true,
+	}
+}
+
 // loadMigration loads a single migration from its directory
 func loadMigration(migrationsPath, id, dirName string) (*Migration, error) {
 	migrationPath := filepath.Join(migrationsPath, dirName)
@@ -211,12 +281,11 @@ func loadMigration(migrationsPath, id, dirName string) (*Migration, error) {
 		return nil, err
 	}
 
-	// Load configuration
-	config, err := LoadMigrationConfig(migrationPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load migration config: %w", err)
-	}
-	migration.Config = config
+	// Load shell scripts (migration-specific)
+	migration.ExpandScript = loadScript(migrationPath, "expand.sh")
+	migration.MigrateScript = loadScript(migrationPath, "migrate.sh")
+	migration.ContractScript = loadScript(migrationPath, "contract.sh")
+	migration.PostScript = loadScript(migrationPath, "post.sh")
 
 	return migration, nil
 }
@@ -250,7 +319,6 @@ func CreateMigration(migrationsPath, name string) (*Migration, error) {
 	expandSQLPath := filepath.Join(migrationPath, "expand.sql")
 	migrateSQLPath := filepath.Join(migrationPath, "migrate.sql")
 	contractSQLPath := filepath.Join(migrationPath, "contract.sql")
-	configPath := filepath.Join(migrationPath, "zdd.yaml")
 
 	if err := os.WriteFile(expandSQLPath, []byte("-- Expand phase SQL (optional)\n-- Add new columns, tables, etc. that are backward compatible\n"), 0644); err != nil {
 		return nil, fmt.Errorf("failed to create expand.sql: %w", err)
@@ -264,9 +332,26 @@ func CreateMigration(migrationsPath, name string) (*Migration, error) {
 		return nil, fmt.Errorf("failed to create contract.sql: %w", err)
 	}
 
-	// Create example configuration file
-	if err := os.WriteFile(configPath, []byte(ExampleConfigYAML), 0644); err != nil {
-		return nil, fmt.Errorf("failed to create zdd.yaml: %w", err)
+	// Create shell script files (expand.sh, migrate.sh, contract.sh, post.sh)
+	expandScriptPath := filepath.Join(migrationPath, "expand.sh")
+	migrateScriptPath := filepath.Join(migrationPath, "migrate.sh")
+	contractScriptPath := filepath.Join(migrationPath, "contract.sh")
+	postScriptPath := filepath.Join(migrationPath, "post.sh")
+
+	if err := os.WriteFile(expandScriptPath, []byte(expandScriptTemplate), 0755); err != nil {
+		return nil, fmt.Errorf("failed to create expand.sh: %w", err)
+	}
+
+	if err := os.WriteFile(migrateScriptPath, []byte(migrateScriptTemplate), 0755); err != nil {
+		return nil, fmt.Errorf("failed to create migrate.sh: %w", err)
+	}
+
+	if err := os.WriteFile(contractScriptPath, []byte(contractScriptTemplate), 0755); err != nil {
+		return nil, fmt.Errorf("failed to create contract.sh: %w", err)
+	}
+
+	if err := os.WriteFile(postScriptPath, []byte(postScriptTemplate), 0755); err != nil {
+		return nil, fmt.Errorf("failed to create post.sh: %w", err)
 	}
 
 	createdAt, _ := time.Parse(migrationTimeFormat, id)
@@ -290,7 +375,6 @@ func CreateMigration(migrationsPath, name string) (*Migration, error) {
 			Sequence: 0,
 			Content:  "-- Contract phase SQL (optional)\n-- Remove old columns, tables, etc. no longer needed\n",
 		}},
-		Config: &MigrationConfig{}, // Empty config initially
 	}
 
 	return migration, nil
@@ -386,24 +470,10 @@ func HasNonEmptySQL(sqlFiles []SQLFile) bool {
 	return false
 }
 
-// ValidateOutstandingMigrations validates that there's at most one migration with expand/migrate/contract
-// after the last applied migration
+// ValidateOutstandingMigrations validates pending migrations
+// With shell script support, users have full control via ZDD_IS_HEAD environment variable
+// so we don't need to restrict multiple pending migrations
 func ValidateOutstandingMigrations(pending []Migration) error {
-	migrationsWithExpandContract := 0
-
-	for _, migration := range pending {
-		hasExpandSQL := HasNonEmptySQL(migration.ExpandSQLFiles)
-		hasMigrateSQL := HasNonEmptySQL(migration.MigrateSQLFiles)
-		hasContractSQL := HasNonEmptySQL(migration.ContractSQLFiles)
-
-		if hasExpandSQL || hasMigrateSQL || hasContractSQL {
-			migrationsWithExpandContract++
-		}
-	}
-
-	if migrationsWithExpandContract > 1 {
-		return fmt.Errorf("found %d pending migrations with expand/migrate/contract SQL - only one is allowed", migrationsWithExpandContract)
-	}
-
+	// No validation needed - users control execution flow via scripts
 	return nil
 }
