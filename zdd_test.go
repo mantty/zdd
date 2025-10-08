@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/testcontainers/testcontainers-go"
 	pgTest "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -144,9 +143,6 @@ func TestMigrationManager_LoadMigrations(t *testing.T) {
 		t.Fatalf("Failed to write test SQL: %v", err)
 	}
 
-	// Wait a bit to ensure different timestamps
-	time.Sleep(1 * time.Second)
-
 	// Create another migration
 	migration2, err := zdd.CreateMigration(migrationsDir, "second_migration")
 	if err != nil {
@@ -272,10 +268,6 @@ func TestMigrationRunner_ExpandContractPattern(t *testing.T) {
 	if err := runner.RunMigrations(ctx); err != nil {
 		t.Fatalf("Failed to run base migration: %v", err)
 	}
-
-	// Wait to ensure different timestamps for the next migration
-	// TODO: Ensure this isn't actually necessary and remove
-	time.Sleep(1 * time.Second)
 
 	// Create an expand-contract migration and apply it separately
 	expandContractMigration, err := zdd.CreateMigration(migrationsDir, "add_email_column")
