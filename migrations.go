@@ -89,12 +89,11 @@ type (
 
 const (
 	migrationDirDefault = "migrations"
-	migrationTimeFormat = "20060102150405" // YYYYMMDDHHMMSS format for lexicographic sorting
 )
 
 var (
 	// Regex patterns for migration files
-	migrationFilePattern = regexp.MustCompile(`^(\d{14})_(.+)$`)
+	migrationFilePattern = regexp.MustCompile(`^(\d{6})_(.+)$`)
 	expandSQLPattern     = regexp.MustCompile(`^expand(?:\.(\d+))?\.sql$`)
 	migrateSQLPattern    = regexp.MustCompile(`^migrate(?:\.(\d+))?\.sql$`)
 	contractSQLPattern   = regexp.MustCompile(`^contract(?:\.(\d+))?\.sql$`)
@@ -247,12 +246,6 @@ func loadDefaultScript(migrationsPath, filename string) *ScriptFile {
 func loadMigration(migrationsPath, id, dirName string) (*Migration, error) {
 	migrationPath := filepath.Join(migrationsPath, dirName)
 
-	// Parse timestamp from ID
-	createdAt, err := time.Parse(migrationTimeFormat, id)
-	if err != nil {
-		return nil, fmt.Errorf("invalid migration ID format %s: %w", id, err)
-	}
-
 	// Extract name from directory name
 	matches := migrationFilePattern.FindStringSubmatch(dirName)
 	if len(matches) != 3 {
@@ -262,7 +255,7 @@ func loadMigration(migrationsPath, id, dirName string) (*Migration, error) {
 	migration := &Migration{
 		ID:        id,
 		Name:      matches[2],
-		CreatedAt: createdAt,
+		CreatedAt: time.Time{}, // Sequential IDs don't encode creation time
 		Directory: migrationPath,
 	}
 
@@ -301,8 +294,25 @@ func CreateMigration(migrationsPath, name string) (*Migration, error) {
 	name = strings.ReplaceAll(name, " ", "_")
 	name = strings.ToLower(name)
 
-	// Generate timestamp-based ID
-	id := time.Now().Format(migrationTimeFormat)
+	// Find the next sequential ID by checking existing migrations
+	existingMigrations, err := LoadMigrations(migrationsPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("failed to load existing migrations: %w", err)
+	}
+
+	// Determine next ID
+	nextID := 1
+	for _, m := range existingMigrations {
+		// Parse the ID as an integer
+		if idNum, err := strconv.Atoi(m.ID); err == nil {
+			if idNum >= nextID {
+				nextID = idNum + 1
+			}
+		}
+	}
+
+	// Format ID as 6-digit zero-padded string
+	id := fmt.Sprintf("%06d", nextID)
 	dirName := fmt.Sprintf("%s_%s", id, name)
 	migrationPath := filepath.Join(migrationsPath, dirName)
 
@@ -355,11 +365,10 @@ func CreateMigration(migrationsPath, name string) (*Migration, error) {
 		return nil, fmt.Errorf("failed to create post.sh: %w", err)
 	}
 
-	createdAt, _ := time.Parse(migrationTimeFormat, id)
 	migration := &Migration{
 		ID:        id,
 		Name:      name,
-		CreatedAt: createdAt,
+		CreatedAt: time.Now(),
 		Directory: migrationPath,
 		ExpandSQLFiles: []SQLFile{{
 			Path:     expandSQLPath,
@@ -416,11 +425,10 @@ func CompareMigrations(local []Migration, applied []DBMigrationRecord) *Migratio
 	for _, appliedRecord := range applied {
 		if _, exists := localMap[appliedRecord.ID]; !exists {
 			// Create a migration struct for the missing migration
-			createdAt, _ := time.Parse(migrationTimeFormat, appliedRecord.ID)
 			missingMigration := Migration{
 				ID:        appliedRecord.ID,
 				Name:      appliedRecord.Name,
-				CreatedAt: createdAt,
+				CreatedAt: time.Time{}, // No creation time available for missing migrations
 				AppliedAt: &appliedRecord.AppliedAt,
 			}
 			status.Missing = append(status.Missing, missingMigration)
