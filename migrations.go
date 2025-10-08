@@ -82,6 +82,7 @@ type (
 		RecordMigration(migration Migration, checksum string) error
 		ExecuteSQLInTransaction(sqlStatements []string) error
 		DumpSchema() (string, error)
+		ConnectionString() string
 		Close() error
 	}
 )

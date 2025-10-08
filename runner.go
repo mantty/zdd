@@ -148,6 +148,7 @@ func (mr *MigrationRunner) executeScript(script *ScriptFile, migration Migration
 		"ZDD_MIGRATION_NAME":  migration.Name,
 		"ZDD_PHASE":           phase,
 		"ZDD_MIGRATIONS_PATH": mr.migrationsPath,
+		"ZDD_DATABASE_URL":    mr.db.ConnectionString(),
 	}
 
 	scriptType := "migration-specific"

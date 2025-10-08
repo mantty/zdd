@@ -1,2 +1,0 @@
--- Migrate phase SQL (optional)
--- Core schema changes, data transformations

@@ -14,8 +14,9 @@ import (
 type (
 	// DB wraps a PostgreSQL connection pool and implements zdd.DatabaseProvider
 	DB struct {
-		pool *pgxpool.Pool
-		ctx  context.Context
+		pool    *pgxpool.Pool
+		ctx     context.Context
+		connStr string
 	}
 )
 
@@ -39,7 +40,11 @@ func NewDB(ctx context.Context, databaseURL string) (*DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	db := &DB{pool: pool, ctx: ctx}
+	db := &DB{
+		pool:    pool,
+		ctx:     ctx,
+		connStr: databaseURL,
+	}
 	if err := db.InitMigrationSchema(); err != nil {
 		pool.Close()
 		return nil, err
@@ -52,6 +57,11 @@ func NewDB(ctx context.Context, databaseURL string) (*DB, error) {
 func (db *DB) Close() error {
 	db.pool.Close()
 	return nil
+}
+
+// ConnectionString returns the database connection string
+func (db *DB) ConnectionString() string {
+	return db.connStr
 }
 
 // InitMigrationSchema creates the zdd_migrations schema and table if they don't exist

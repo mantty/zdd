@@ -1,2 +1,0 @@
--- Expand phase SQL (optional)
--- Add new columns, tables, etc. that are backward compatible

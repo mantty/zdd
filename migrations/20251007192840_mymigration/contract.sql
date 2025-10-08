@@ -1,2 +1,0 @@
--- Contract phase SQL (optional)
--- Remove old columns, tables, etc. no longer needed
