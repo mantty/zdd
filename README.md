@@ -4,7 +4,7 @@ A opinionated CLI tool for managing SQL migrations and app deployments with Post
 
 ## Philosophy
 
-ZDD has strong opinions about how migrations should be handled:
+ZDD has the following opinions about how migrations should be handled:
 
 - **Migrations should be written in plain SQL** (no DSLs)
 - **Migrations should be idempotent**
@@ -13,16 +13,16 @@ ZDD has strong opinions about how migrations should be handled:
 - **Migrations should be roll forward** - down migrations are risky. It's better to apply new migrations if required to revert
 - **Migrations should be automatically wrapped in transactions**
 - **PostgreSQL is good**
-- **expand-migrate-contract is the proper way to handle deploying stateful apps**
+- **expand-migrate-contract is the proper way to deploy stateful apps**
 
 ## Features
 
-- **Pre and Post SQL migrations**: Unlike most migration tools, ZDD allows both pre-deployment and post-deployment SQL
+- **Shell script hooks**: Optional shell scripts (expand.sh, migrate.sh, contract.sh, post.sh) with environment variables for deployment control
 - **Expand-Migrate-Contract pattern**: Safely handle schema changes with zero downtime
 - **Transaction safety**: All SQL files are executed within transactions
 - **Schema diffing**: Automatically generate before/after schema comparisons
 - **Numbered SQL files**: Support for `expand.1.sql`, `expand.2.sql` ... `expand.n.sql` for batching large changes
-- **Environment variable configuration**: All settings can be configured via environment variables
+- **Sequential migration IDs**: Conflict-free 6-digit migration identifiers
 
 ## Installation
 
@@ -48,7 +48,6 @@ ZDD can be configured via command line flags or environment variables:
 |------|---------------------|-------------|
 | `--database-url` | `ZDD_DATABASE_URL` | PostgreSQL connection string |
 | `--migrations-path` | `ZDD_MIGRATIONS_PATH` | Path to migrations directory (default: "migrations") |
-| `--deploy-command` | `ZDD_DEPLOY_COMMAND` | Command to run for deployment (e.g., "npm deploy") |
 
 ### Commands
 
@@ -58,13 +57,21 @@ ZDD can be configured via command line flags or environment variables:
 zdd create add_users_table
 ```
 
-This creates a new migration directory with timestamp-based ID:
+This creates a new migration directory with a sequential ID:
 ```
 migrations/
-  20231004120000_add_users_table/
-    pre.sql   # SQL to run before deployment
-    post.sql  # SQL to run after deployment
+  000001_add_users_table/
+    expand.sh
+    expand.sql
+    migrate.sh
+    migrate.sql
+    contract.sh
+    contract.sql
+    post.sh
 ```
+
+Each of the above files are optional and can be safely deleted.
+Any deployment stage can have a script, an SQL migration, both, or neither.
 
 #### List migrations
 
@@ -78,11 +85,11 @@ Migration Status:
 ================
 
 Applied (1):
-  ✓ 20231004120000 - add_users_table (applied: 2023-10-04 12:05:30)
+  ✓ 000001 - add_users_table (applied: 2023-10-04 12:05:30)
 
 Pending (2):
-  ○ 20231004130000 - add_posts_table [pre]
-  ○ 20231004140000 - expand_contract_migration [pre+post]
+  ○ 000002 - add_posts_table
+  ○ 000003 - expand_contract_migration
 ```
 
 #### Apply migrations
@@ -93,27 +100,13 @@ zdd migrate
 
 Applies all pending migrations following the expand-migrate-contract pattern.
 
-### Migration Flow
-
-When you run `zdd migrate`, here's what happens:
-
-1. **Check applied migrations** - Query the `zdd_migrations` schema to see what's already applied
-2. **Validate outstanding migrations** - Ensure at most one migration has both pre and post SQL
-3. **Dump current schema** - Capture the before state
-4. **Apply regular migrations** - Apply all migrations up to the "head" migration (the one with both pre and post)
-5. **Apply head migration** using expand-migrate-contract:
-   - **Expand phase**: Apply pre-migration SQL (e.g., add nullable columns)
-   - **Migrate phase**: Run the deploy command (app deployment)
-   - **Contract phase**: Apply post-migration SQL (e.g., make columns required)
-6. **Dump final schema** - Capture the after state
-7. **Generate schema diff** - Show what changed
 
 ### Migration Examples
 
 #### Simple Migration (only pre SQL)
 
 ```sql
--- migrations/20231004120000_add_users_table/pre.sql
+-- migrations/000001_add_users_table/migrate.sql
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -125,13 +118,13 @@ CREATE TABLE users (
 #### Expand-Contract Migration
 
 ```sql
--- migrations/20231004140000_add_email_column/pre.sql
+-- migrations/000002_add_email_column/expand.sql
 -- Expand: Add new column as nullable first
 ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT FALSE;
 ```
 
 ```sql
--- migrations/20231004140000_add_email_column/post.sql  
+-- migrations/000002_add_email_column/contract.sql  
 -- Contract: Make it required after app deployment
 ALTER TABLE users ALTER COLUMN email_verified SET NOT NULL;
 ```
@@ -141,12 +134,13 @@ ALTER TABLE users ALTER COLUMN email_verified SET NOT NULL;
 For very large migrations, you can use numbered files:
 
 ```
-migrations/20231004150000_large_migration/
-  pre.1.sql   # First batch
-  pre.2.sql   # Second batch  
-  pre.3.sql   # Third batch
-  post.1.sql  # Post-deployment batch 1
-  post.2.sql  # Post-deployment batch 2
+migrations/000003_large_migration/
+  expand.1.sql    # First batch
+  expand.2.sql    # Second batch  
+  expand.3.sql    # Third batch
+  migrate.sql     # Standalone migration step
+  contract.1.sql  # Post-deployment batch 1
+  contract.2.sql  # Post-deployment batch 2
 ```
 
 ### Environment Setup
@@ -154,7 +148,6 @@ migrations/20231004150000_large_migration/
 ```bash
 export ZDD_DATABASE_URL="postgres://user:password@localhost/mydb"
 export ZDD_MIGRATIONS_PATH="./db/migrations"
-export ZDD_DEPLOY_COMMAND="npm run deploy:production"
 
 zdd migrate
 ```
