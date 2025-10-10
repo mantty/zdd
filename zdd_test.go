@@ -49,7 +49,7 @@ func setupTestDB(t *testing.T) (*postgres.DB, string) {
 	}
 
 	// Ensure deployment schema exists (should be auto-created by NewDB)
-	if err := db.ExecuteSQLInTransaction([]string{"SELECT COUNT(*) FROM zdd_deployments.applied_deployments"}); err != nil {
+	if err := db.ExecuteSQLInTransaction("SELECT COUNT(*) FROM zdd_deployments.applied_deployments"); err != nil {
 		t.Fatalf("Deployment schema should exist after NewDB initialization: %v", err)
 	}
 
@@ -240,14 +240,14 @@ CREATE TABLE test_users (
 		t.Fatalf("Failed to write SQL: %v", err)
 	}
 
-	// Create runner
-	executor := zdd.NewShellCommandExecutor(0)
-	runner := zdd.NewDeploymentRunner(db, deploymentsDir, executor)
+	// Build and execute plan
+	plan, err := zdd.BuildPlan(deploymentsDir, db)
+	if err != nil {
+		t.Fatalf("Failed to build plan: %v", err)
+	}
 
-	// Run deployments
-	ctx := context.Background()
-	if err := runner.RunDeployments(ctx); err != nil {
-		t.Fatalf("Failed to run deployments: %v", err)
+	if err := plan.Execute(); err != nil {
+		t.Fatalf("Failed to execute plan: %v", err)
 	}
 
 	// Verify deployment was recorded
@@ -263,7 +263,7 @@ CREATE TABLE test_users (
 	}
 
 	// Verify table was created by trying to query it
-	if err := db.ExecuteSQLInTransaction([]string{"SELECT COUNT(*) FROM test_users"}); err != nil {
+	if err := db.ExecuteSQLInTransaction("SELECT COUNT(*) FROM test_users"); err != nil {
 		t.Errorf("Table should have been created: %v", err)
 	}
 }
@@ -283,12 +283,13 @@ func TestDeploymentRunner_ExpandContractPattern(t *testing.T) {
 		t.Fatalf("Failed to write base SQL: %v", err)
 	}
 
-	executor := zdd.NewShellCommandExecutor(0)
-	runner := zdd.NewDeploymentRunner(db, deploymentsDir, executor)
-	ctx := context.Background()
+	plan, err := zdd.BuildPlan(deploymentsDir, db)
+	if err != nil {
+		t.Fatalf("Failed to build plan: %v", err)
+	}
 
-	if err := runner.RunDeployments(ctx); err != nil {
-		t.Fatalf("Failed to run base deployment: %v", err)
+	if err := plan.Execute(); err != nil {
+		t.Fatalf("Failed to execute plan: %v", err)
 	}
 
 	// Create an expand-contract deployment and apply it separately
@@ -309,8 +310,13 @@ func TestDeploymentRunner_ExpandContractPattern(t *testing.T) {
 		t.Fatalf("Failed to write post SQL: %v", err)
 	}
 
-	if err := runner.RunDeployments(ctx); err != nil {
-		t.Fatalf("Failed to run expand/contract deployment: %v", err)
+	plan2, err := zdd.BuildPlan(deploymentsDir, db)
+	if err != nil {
+		t.Fatalf("Failed to build plan: %v", err)
+	}
+
+	if err := plan2.Execute(); err != nil {
+		t.Fatalf("Failed to execute plan: %v", err)
 	}
 
 	// Verify both deployments were applied
@@ -324,13 +330,13 @@ func TestDeploymentRunner_ExpandContractPattern(t *testing.T) {
 
 	// Verify the table structure is correct (email column should be NOT NULL)
 	// We can test this by trying to insert a row without email - it should fail
-	err = db.ExecuteSQLInTransaction([]string{"INSERT INTO test_users (name) VALUES ('test')"})
+	err = db.ExecuteSQLInTransaction("INSERT INTO test_users (name) VALUES ('test')")
 	if err == nil {
 		t.Error("Expected error when inserting without email (column should be NOT NULL)")
 	}
 
 	// But inserting with email should work
-	err = db.ExecuteSQLInTransaction([]string{"INSERT INTO test_users (name, email) VALUES ('test', 'test@example.com')"})
+	err = db.ExecuteSQLInTransaction("INSERT INTO test_users (name, email) VALUES ('test', 'test@example.com')")
 	if err != nil {
 		t.Errorf("Should be able to insert with email: %v", err)
 	}
@@ -383,13 +389,13 @@ func runDeploymentBundleTest(t *testing.T, bundlePath string) {
 	// Get absolute path
 	absBundlePath, _ := filepath.Abs(bundlePath)
 
-	// Create runner
-	executor := zdd.NewShellCommandExecutor(0)
-	runner := zdd.NewDeploymentRunner(db, absBundlePath, executor)
+	// Build and execute plan
+	plan, err := zdd.BuildPlan(absBundlePath, db)
+	if err != nil {
+		t.Fatalf("Failed to build plan: %v", err)
+	}
 
-	// Run deployments
-	ctx := context.Background()
-	err := runner.RunDeployments(ctx)
+	err = plan.Execute()
 
 	if err != nil {
 		t.Fatalf("Deployment failed: %v", err)

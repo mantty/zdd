@@ -139,12 +139,13 @@ func deployCommand(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("failed to initialize deployment schema: %w", err)
 	}
 
-	// Create runner
-	executor := zdd.NewShellCommandExecutor(0) // Use default timeout
-	runner := zdd.NewDeploymentRunner(db, deploymentsPath, executor)
+	// Build and execute plan
+	plan, err := zdd.BuildPlan(deploymentsPath, db)
+	if err != nil {
+		return err
+	}
 
-	// Run deployments
-	return runner.RunDeployments(ctx)
+	return plan.Execute()
 }
 
 // resolveDeploymentsPath converts a relative path to absolute, returns path unchanged if already absolute or empty

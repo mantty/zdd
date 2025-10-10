@@ -140,7 +140,7 @@ func (db *DB) RecordDeployment(deployment zdd.Deployment, checksum string) error
 }
 
 // ExecuteSQLInTransaction executes SQL statements within a transaction
-func (db *DB) ExecuteSQLInTransaction(sqlStatements []string) error {
+func (db *DB) ExecuteSQLInTransaction(sqlStatements ...string) error {
 	tx, err := db.pool.Begin(db.ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -243,4 +243,19 @@ func (db *DB) DumpSchema() (string, error) {
 	}
 
 	return schemaDump.String(), nil
+}
+
+// GenerateSchemaDiff generates and prints a diff of schema changes
+func (db *DB) GenerateSchemaDiff(before, after string) error {
+	// For now, just print the diff - could be enhanced to use external diff tools
+	fmt.Println("\n=== Schema Changes ===")
+	if before == after {
+		fmt.Println("No schema changes detected")
+	} else {
+		fmt.Println("Schema changes detected (detailed diff not implemented yet)")
+		fmt.Printf("Before: %d characters\n", len(before))
+		fmt.Printf("After: %d characters\n", len(after))
+	}
+
+	return nil
 }

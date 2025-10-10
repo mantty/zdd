@@ -47,7 +47,7 @@ func TestNewDBInitializesMigrationSchema(t *testing.T) {
 		t.Fatalf("unexpected schema name: %s", schemaName)
 	}
 
-	if err := db.ExecuteSQLInTransaction([]string{"SELECT COUNT(*) FROM zdd_deployments.applied_deployments"}); err != nil {
+	if err := db.ExecuteSQLInTransaction("SELECT COUNT(*) FROM zdd_deployments.applied_deployments"); err != nil {
 		t.Fatalf("expected applied_migrations table to exist: %v", err)
 	}
 }

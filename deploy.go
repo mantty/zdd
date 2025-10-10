@@ -78,8 +78,9 @@ type (
 		GetAppliedDeployments() ([]DBDeploymentRecord, error)
 		GetLastAppliedDeployment() (*DBDeploymentRecord, error)
 		RecordDeployment(deployment Deployment, checksum string) error
-		ExecuteSQLInTransaction(sqlStatements []string) error
+		ExecuteSQLInTransaction(sqlStatements ...string) error
 		DumpSchema() (string, error)
+		GenerateSchemaDiff(before, after string) error
 		ConnectionString() string
 		Close() error
 	}
@@ -403,6 +404,51 @@ func CalculateChecksum(deployment Deployment) string {
 	}
 
 	return fmt.Sprintf("%x", hasher.Sum(nil))
+}
+
+// Tasks returns all tasks for this deployment in execution order
+func (d Deployment) Tasks() []Task {
+	var tasks []Task
+
+	// Define phases in order with their associated scripts and SQL files
+	phases := []struct {
+		name     string
+		script   *ScriptFile
+		sqlFiles []SQLFile
+	}{
+		{"expand", d.ExpandScript, d.ExpandSQLFiles},
+		{"migrate", d.MigrateScript, d.MigrateSQLFiles},
+		{"contract", d.ContractScript, d.ContractSQLFiles},
+		{"post", d.PostScript, nil},
+	}
+
+	for _, phase := range phases {
+		// Add script task if script exists
+		if phase.script != nil {
+			tasks = append(tasks, Task{
+				DeploymentID: d.ID,
+				TaskType:     "script",
+				Path:         phase.script.Path,
+				Phase:        phase.name,
+			})
+		}
+
+		// Add one task per SQL file
+		for _, sqlFile := range phase.sqlFiles {
+			// Skip files with no actual SQL content
+			if !HasNonEmptySQL([]SQLFile{sqlFile}) {
+				continue
+			}
+			tasks = append(tasks, Task{
+				DeploymentID: d.ID,
+				TaskType:     "sql",
+				Path:         sqlFile.Path,
+				Phase:        phase.name,
+			})
+		}
+	}
+
+	return tasks
 }
 
 // HasNonEmptySQL checks if a slice of SQL files contains non-empty SQL content
