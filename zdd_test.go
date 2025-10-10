@@ -48,9 +48,9 @@ func setupTestDB(t *testing.T) (*postgres.DB, string) {
 		t.Fatalf("Failed to connect to test database: %v", err)
 	}
 
-	// Ensure migration schema exists (should be auto-created by NewDB)
-	if err := db.ExecuteSQLInTransaction([]string{"SELECT COUNT(*) FROM zdd_migrations.applied_migrations"}); err != nil {
-		t.Fatalf("Migration schema should exist after NewDB initialization: %v", err)
+	// Ensure deployment schema exists (should be auto-created by NewDB)
+	if err := db.ExecuteSQLInTransaction([]string{"SELECT COUNT(*) FROM zdd_deployments.applied_deployments"}); err != nil {
+		t.Fatalf("Deployment schema should exist after NewDB initialization: %v", err)
 	}
 
 	return db, dbURL
@@ -77,120 +77,120 @@ func setupTestDB(t *testing.T) (*postgres.DB, string) {
 // 	return nil
 // }
 
-// createTestMigrationDir creates a temporary migration directory for testing
-func createTestMigrationDir(t *testing.T) string {
+// createTestDeploymentDir creates a temporary deployment directory for testing
+func createTestDeploymentDir(t *testing.T) string {
 	t.Helper()
 
 	tempDir := t.TempDir()
-	migrationsDir := filepath.Join(tempDir, "migrations")
+	deploymentsDir := filepath.Join(tempDir, "migrations")
 
-	if err := os.MkdirAll(migrationsDir, 0755); err != nil {
-		t.Fatalf("Failed to create migrations directory: %v", err)
+	if err := os.MkdirAll(deploymentsDir, 0755); err != nil {
+		t.Fatalf("Failed to create deployments directory: %v", err)
 	}
 
-	return migrationsDir
+	return deploymentsDir
 }
 
-// getMigrationFilePath returns the path to a specific SQL file for a migration
-func getMigrationFilePath(m *zdd.Migration, fileName string) string {
-	return filepath.Join(m.Directory, fileName)
+// getDeploymentFilePath returns the path to a specific SQL file for a deployment
+func getDeploymentFilePath(d *zdd.Deployment, fileName string) string {
+	return filepath.Join(d.Directory, fileName)
 }
 
-func TestMigrationManager_CreateMigration(t *testing.T) {
-	migrationsDir := createTestMigrationDir(t)
+func TestDeploymentManager_CreateDeployment(t *testing.T) {
+	deploymentsDir := createTestDeploymentDir(t)
 
-	migration, err := zdd.CreateMigration(migrationsDir, "test_migration")
+	deployment, err := zdd.CreateDeployment(deploymentsDir, "test_deployment")
 	if err != nil {
-		t.Fatalf("Failed to create migration: %v", err)
+		t.Fatalf("Failed to create deployment: %v", err)
 	}
 
-	// Verify migration properties
-	if migration.ID == "" {
-		t.Error("Migration ID should not be empty")
+	// Verify deployment properties
+	if deployment.ID == "" {
+		t.Error("Deployment ID should not be empty")
 	}
-	if migration.Name != "test_migration" {
-		t.Errorf("Expected migration name 'test_migration', got '%s'", migration.Name)
+	if deployment.Name != "test_deployment" {
+		t.Errorf("Expected deployment name 'test_deployment', got '%s'", deployment.Name)
 	}
 
-	// Load the migration to verify files were created
-	migrations, err := zdd.LoadMigrations(migrationsDir)
+	// Load the deployment to verify files were created
+	deployments, err := zdd.LoadDeployments(deploymentsDir)
 	if err != nil {
-		t.Fatalf("Failed to load migrations: %v", err)
+		t.Fatalf("Failed to load deployments: %v", err)
 	}
-	if len(migrations) != 1 {
-		t.Fatalf("Expected 1 migration, got %d", len(migrations))
+	if len(deployments) != 1 {
+		t.Fatalf("Expected 1 deployment, got %d", len(deployments))
 	}
 
-	loadedMigration := migrations[0]
-	if len(loadedMigration.ExpandSQLFiles) != 1 {
-		t.Errorf("Expected 1 expand SQL file, got %d", len(loadedMigration.ExpandSQLFiles))
+	loadedDeployment := deployments[0]
+	if len(loadedDeployment.ExpandSQLFiles) != 1 {
+		t.Errorf("Expected 1 expand SQL file, got %d", len(loadedDeployment.ExpandSQLFiles))
 	}
-	if len(loadedMigration.MigrateSQLFiles) != 1 {
-		t.Errorf("Expected 1 migrate SQL file, got %d", len(loadedMigration.MigrateSQLFiles))
+	if len(loadedDeployment.MigrateSQLFiles) != 1 {
+		t.Errorf("Expected 1 migrate SQL file, got %d", len(loadedDeployment.MigrateSQLFiles))
 	}
-	if len(loadedMigration.ContractSQLFiles) != 1 {
-		t.Errorf("Expected 1 contract SQL file, got %d", len(loadedMigration.ContractSQLFiles))
+	if len(loadedDeployment.ContractSQLFiles) != 1 {
+		t.Errorf("Expected 1 contract SQL file, got %d", len(loadedDeployment.ContractSQLFiles))
 	}
 
 	// Verify files were created
-	if _, err := os.Stat(loadedMigration.ExpandSQLFiles[0].Path); os.IsNotExist(err) {
+	if _, err := os.Stat(loadedDeployment.ExpandSQLFiles[0].Path); os.IsNotExist(err) {
 		t.Error("Expand SQL file should exist")
 	}
-	if _, err := os.Stat(loadedMigration.MigrateSQLFiles[0].Path); os.IsNotExist(err) {
+	if _, err := os.Stat(loadedDeployment.MigrateSQLFiles[0].Path); os.IsNotExist(err) {
 		t.Error("Migrate SQL file should exist")
 	}
-	if _, err := os.Stat(loadedMigration.ContractSQLFiles[0].Path); os.IsNotExist(err) {
+	if _, err := os.Stat(loadedDeployment.ContractSQLFiles[0].Path); os.IsNotExist(err) {
 		t.Error("Contract SQL file should exist")
 	}
 }
 
-func TestMigrationManager_LoadMigrations(t *testing.T) {
-	migrationsDir := createTestMigrationDir(t)
+func TestDeploymentManager_LoadDeployments(t *testing.T) {
+	deploymentsDir := createTestDeploymentDir(t)
 
-	// Create first migration
-	migration1, err := zdd.CreateMigration(migrationsDir, "first_migration")
+	// Create first deployment
+	deployment1, err := zdd.CreateDeployment(deploymentsDir, "first_deployment")
 	if err != nil {
-		t.Fatalf("Failed to create first migration: %v", err)
+		t.Fatalf("Failed to create first deployment: %v", err)
 	}
 
-	// Create second migration
-	migration2, err := zdd.CreateMigration(migrationsDir, "second_migration")
+	// Create second deployment
+	deployment2, err := zdd.CreateDeployment(deploymentsDir, "second_deployment")
 	if err != nil {
-		t.Fatalf("Failed to create second migration: %v", err)
+		t.Fatalf("Failed to create second deployment: %v", err)
 	}
 
-	// Load migrations to get file paths
-	migrations, err := zdd.LoadMigrations(migrationsDir)
+	// Load deployments to get file paths
+	deployments, err := zdd.LoadDeployments(deploymentsDir)
 	if err != nil {
-		t.Fatalf("Failed to load migrations: %v", err)
+		t.Fatalf("Failed to load deployments: %v", err)
 	}
 
-	// Add some SQL content to the first migration's expand.sql
+	// Add some SQL content to the first deployment's expand.sql
 	testSQL := "CREATE TABLE test_users (id SERIAL PRIMARY KEY, name VARCHAR(255));"
-	if err := os.WriteFile(migrations[0].ExpandSQLFiles[0].Path, []byte(testSQL), 0644); err != nil {
+	if err := os.WriteFile(deployments[0].ExpandSQLFiles[0].Path, []byte(testSQL), 0644); err != nil {
 		t.Fatalf("Failed to write test SQL: %v", err)
 	}
 
-	// Load migrations again to verify content
-	migrations, err = zdd.LoadMigrations(migrationsDir)
+	// Load deployments again to verify content
+	deployments, err = zdd.LoadDeployments(deploymentsDir)
 	if err != nil {
-		t.Fatalf("Failed to load migrations: %v", err)
+		t.Fatalf("Failed to load deployments: %v", err)
 	}
 
-	// Verify migrations are loaded and sorted
-	if len(migrations) != 2 {
-		t.Errorf("Expected 2 migrations, got %d", len(migrations))
+	// Verify deployments are loaded and sorted
+	if len(deployments) != 2 {
+		t.Errorf("Expected 2 deployments, got %d", len(deployments))
 	}
 
-	if migrations[0].ID != migration1.ID {
-		t.Errorf("Expected first migration ID %s, got %s", migration1.ID, migrations[0].ID)
+	if deployments[0].ID != deployment1.ID {
+		t.Errorf("Expected first deployment ID %s, got %s", deployment1.ID, deployments[0].ID)
 	}
-	if migrations[1].ID != migration2.ID {
-		t.Errorf("Expected second migration ID %s, got %s", migration2.ID, migrations[1].ID)
+	if deployments[1].ID != deployment2.ID {
+		t.Errorf("Expected second deployment ID %s, got %s", deployment2.ID, deployments[1].ID)
 	}
 
 	// Verify SQL content was loaded
-	if len(migrations[0].ExpandSQLFiles) == 0 || migrations[0].ExpandSQLFiles[0].Content != testSQL {
+	if len(deployments[0].ExpandSQLFiles) == 0 || deployments[0].ExpandSQLFiles[0].Content != testSQL {
 		t.Error("Pre SQL content should be loaded correctly")
 	}
 }
@@ -198,33 +198,33 @@ func TestMigrationManager_LoadMigrations(t *testing.T) {
 func TestDatabaseProvider_InitAndQuery(t *testing.T) {
 	db, _ := setupTestDB(t)
 
-	// Test getting applied migrations (should be empty initially)
-	applied, err := db.GetAppliedMigrations()
+	// Test getting applied deployments (should be empty initially)
+	applied, err := db.GetAppliedDeployments()
 	if err != nil {
-		t.Fatalf("Failed to get applied migrations: %v", err)
+		t.Fatalf("Failed to get applied deployments: %v", err)
 	}
 	if len(applied) != 0 {
-		t.Errorf("Expected 0 applied migrations, got %d", len(applied))
+		t.Errorf("Expected 0 applied deployments, got %d", len(applied))
 	}
 
-	// Test getting last applied migration (should be nil)
-	last, err := db.GetLastAppliedMigration()
+	// Test getting last applied deployment (should be nil)
+	last, err := db.GetLastAppliedDeployment()
 	if err != nil {
-		t.Fatalf("Failed to get last applied migration: %v", err)
+		t.Fatalf("Failed to get last applied deployment: %v", err)
 	}
 	if last != nil {
-		t.Error("Expected no last applied migration, got one")
+		t.Error("Expected no last applied deployment, got one")
 	}
 }
 
-func TestMigrationRunner_ApplySimpleMigration(t *testing.T) {
+func TestDeploymentRunner_ApplySimpleDeployment(t *testing.T) {
 	db, _ := setupTestDB(t)
-	migrationsDir := createTestMigrationDir(t)
+	deploymentsDir := createTestDeploymentDir(t)
 
-	// Create a migration with SQL that creates a table
-	migration, err := zdd.CreateMigration(migrationsDir, "create_users_table")
+	// Create a deployment with SQL that creates a table
+	deployment, err := zdd.CreateDeployment(deploymentsDir, "create_users_table")
 	if err != nil {
-		t.Fatalf("Failed to create migration: %v", err)
+		t.Fatalf("Failed to create deployment: %v", err)
 	}
 
 	// Add SQL content
@@ -236,30 +236,30 @@ CREATE TABLE test_users (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 `
-	if err := os.WriteFile(getMigrationFilePath(migration, "expand.sql"), []byte(createTableSQL), 0644); err != nil {
+	if err := os.WriteFile(getDeploymentFilePath(deployment, "expand.sql"), []byte(createTableSQL), 0644); err != nil {
 		t.Fatalf("Failed to write SQL: %v", err)
 	}
 
 	// Create runner
 	executor := zdd.NewShellCommandExecutor(0)
-	runner := zdd.NewMigrationRunner(db, migrationsDir, executor)
+	runner := zdd.NewDeploymentRunner(db, deploymentsDir, executor)
 
-	// Run migrations
+	// Run deployments
 	ctx := context.Background()
-	if err := runner.RunMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
+	if err := runner.RunDeployments(ctx); err != nil {
+		t.Fatalf("Failed to run deployments: %v", err)
 	}
 
-	// Verify migration was recorded
-	applied, err := db.GetAppliedMigrations()
+	// Verify deployment was recorded
+	applied, err := db.GetAppliedDeployments()
 	if err != nil {
-		t.Fatalf("Failed to get applied migrations: %v", err)
+		t.Fatalf("Failed to get applied deployments: %v", err)
 	}
 	if len(applied) != 1 {
-		t.Errorf("Expected 1 applied migration, got %d", len(applied))
+		t.Errorf("Expected 1 applied deployment, got %d", len(applied))
 	}
-	if applied[0].ID != migration.ID {
-		t.Errorf("Expected migration ID %s, got %s", migration.ID, applied[0].ID)
+	if applied[0].ID != deployment.ID {
+		t.Errorf("Expected deployment ID %s, got %s", deployment.ID, applied[0].ID)
 	}
 
 	// Verify table was created by trying to query it
@@ -268,58 +268,58 @@ CREATE TABLE test_users (
 	}
 }
 
-func TestMigrationRunner_ExpandContractPattern(t *testing.T) {
+func TestDeploymentRunner_ExpandContractPattern(t *testing.T) {
 	db, _ := setupTestDB(t)
-	migrationsDir := createTestMigrationDir(t)
+	deploymentsDir := createTestDeploymentDir(t)
 
-	// First, create a base table migration and apply it
-	baseMigration, err := zdd.CreateMigration(migrationsDir, "create_base_table")
+	// First, create a base table deployment and apply it
+	baseDeployment, err := zdd.CreateDeployment(deploymentsDir, "create_base_table")
 	if err != nil {
-		t.Fatalf("Failed to create base migration: %v", err)
+		t.Fatalf("Failed to create base deployment: %v", err)
 	}
 
 	baseSQL := `CREATE TABLE test_users (id SERIAL PRIMARY KEY, name VARCHAR(255) NOT NULL);`
-	if err := os.WriteFile(getMigrationFilePath(baseMigration, "expand.sql"), []byte(baseSQL), 0644); err != nil {
+	if err := os.WriteFile(getDeploymentFilePath(baseDeployment, "expand.sql"), []byte(baseSQL), 0644); err != nil {
 		t.Fatalf("Failed to write base SQL: %v", err)
 	}
 
 	executor := zdd.NewShellCommandExecutor(0)
-	runner := zdd.NewMigrationRunner(db, migrationsDir, executor)
+	runner := zdd.NewDeploymentRunner(db, deploymentsDir, executor)
 	ctx := context.Background()
 
-	if err := runner.RunMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run base migration: %v", err)
+	if err := runner.RunDeployments(ctx); err != nil {
+		t.Fatalf("Failed to run base deployment: %v", err)
 	}
 
-	// Create an expand-contract migration and apply it separately
-	expandContractMigration, err := zdd.CreateMigration(migrationsDir, "add_email_column")
+	// Create an expand-contract deployment and apply it separately
+	expandContractDeployment, err := zdd.CreateDeployment(deploymentsDir, "add_email_column")
 	if err != nil {
-		t.Fatalf("Failed to create expand-contract migration: %v", err)
+		t.Fatalf("Failed to create expand-contract deployment: %v", err)
 	}
 
-	// Pre-migration: Add column as nullable
+	// Pre-deployment: Add column as nullable
 	preSQL := `ALTER TABLE test_users ADD COLUMN email VARCHAR(255);`
-	if err := os.WriteFile(getMigrationFilePath(expandContractMigration, "expand.sql"), []byte(preSQL), 0644); err != nil {
+	if err := os.WriteFile(getDeploymentFilePath(expandContractDeployment, "expand.sql"), []byte(preSQL), 0644); err != nil {
 		t.Fatalf("Failed to write pre SQL: %v", err)
 	}
 
-	// Post-migration: Make column required
+	// Post-deployment: Make column required
 	postSQL := `ALTER TABLE test_users ALTER COLUMN email SET NOT NULL;`
-	if err := os.WriteFile(getMigrationFilePath(expandContractMigration, "contract.sql"), []byte(postSQL), 0644); err != nil {
+	if err := os.WriteFile(getDeploymentFilePath(expandContractDeployment, "contract.sql"), []byte(postSQL), 0644); err != nil {
 		t.Fatalf("Failed to write post SQL: %v", err)
 	}
 
-	if err := runner.RunMigrations(ctx); err != nil {
-		t.Fatalf("Failed to run expand/contract migration: %v", err)
+	if err := runner.RunDeployments(ctx); err != nil {
+		t.Fatalf("Failed to run expand/contract deployment: %v", err)
 	}
 
-	// Verify both migrations were applied
-	applied, err := db.GetAppliedMigrations()
+	// Verify both deployments were applied
+	applied, err := db.GetAppliedDeployments()
 	if err != nil {
-		t.Fatalf("Failed to get applied migrations: %v", err)
+		t.Fatalf("Failed to get applied deployments: %v", err)
 	}
 	if len(applied) != 2 {
-		t.Errorf("Expected 2 applied migrations, got %d", len(applied))
+		t.Errorf("Expected 2 applied deployments, got %d", len(applied))
 	}
 
 	// Verify the table structure is correct (email column should be NOT NULL)
@@ -336,8 +336,8 @@ func TestMigrationRunner_ExpandContractPattern(t *testing.T) {
 	}
 }
 
-// TestMigrationBundles is a table-driven test that discovers and runs migration test bundles
-func TestMigrationBundles(t *testing.T) {
+// TestDeploymentBundles is a table-driven test that discovers and runs deployment test bundles
+func TestDeploymentBundles(t *testing.T) {
 	testdataDir := "testdata"
 
 	// Discover all test bundles
@@ -369,13 +369,13 @@ func TestMigrationBundles(t *testing.T) {
 		bundleName := filepath.Base(bundlePath)
 
 		t.Run(bundleName, func(t *testing.T) {
-			runMigrationBundleTest(t, bundlePath)
+			runDeploymentBundleTest(t, bundlePath)
 		})
 	}
 }
 
-// runMigrationBundleTest executes a single migration bundle test
-func runMigrationBundleTest(t *testing.T, bundlePath string) {
+// runDeploymentBundleTest executes a single deployment bundle test
+func runDeploymentBundleTest(t *testing.T, bundlePath string) {
 	// Setup test database
 	db, _ := setupTestDB(t)
 	defer db.Close()
@@ -385,14 +385,14 @@ func runMigrationBundleTest(t *testing.T, bundlePath string) {
 
 	// Create runner
 	executor := zdd.NewShellCommandExecutor(0)
-	runner := zdd.NewMigrationRunner(db, absBundlePath, executor)
+	runner := zdd.NewDeploymentRunner(db, absBundlePath, executor)
 
-	// Run migrations
+	// Run deployments
 	ctx := context.Background()
-	err := runner.RunMigrations(ctx)
+	err := runner.RunDeployments(ctx)
 
 	if err != nil {
-		t.Fatalf("Migration failed: %v", err)
+		t.Fatalf("Deployment failed: %v", err)
 	}
 
 	// Validate full schema against expected_schema.sql

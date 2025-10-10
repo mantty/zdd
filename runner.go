@@ -5,117 +5,117 @@ import (
 	"fmt"
 )
 
-// MigrationRunner handles the core migration execution logic
-type MigrationRunner struct {
-	db             DatabaseProvider
-	migrationsPath string
-	executor       CommandExecutor
+// DeploymentRunner handles the core deployment execution logic
+type DeploymentRunner struct {
+	db              DatabaseProvider
+	deploymentsPath string
+	executor        CommandExecutor
 }
 
-// NewMigrationRunner creates a new migration runner
-func NewMigrationRunner(db DatabaseProvider, migrationsPath string, executor CommandExecutor) *MigrationRunner {
-	return &MigrationRunner{
-		db:             db,
-		migrationsPath: migrationsPath,
-		executor:       executor,
+// NewDeploymentRunner creates a new deployment runner
+func NewDeploymentRunner(db DatabaseProvider, deploymentsPath string, executor CommandExecutor) *DeploymentRunner {
+	return &DeploymentRunner{
+		db:              db,
+		deploymentsPath: deploymentsPath,
+		executor:        executor,
 	}
 }
 
-// RunMigrations executes the full migration process
-func (mr *MigrationRunner) RunMigrations(ctx context.Context) error {
-	// 1. Load local migrations
-	localMigrations, err := LoadMigrations(mr.migrationsPath)
+// RunDeployments executes the full deployment process
+func (dr *DeploymentRunner) RunDeployments(ctx context.Context) error {
+	// 1. Load local deployments
+	localDeployments, err := LoadDeployments(dr.deploymentsPath)
 	if err != nil {
-		return fmt.Errorf("failed to load local migrations: %w", err)
+		return fmt.Errorf("failed to load local deployments: %w", err)
 	}
 
-	// 2. Get applied migrations from DB
-	appliedMigrations, err := mr.db.GetAppliedMigrations()
+	// 2. Get applied deployments from DB
+	appliedDeployments, err := dr.db.GetAppliedDeployments()
 	if err != nil {
-		return fmt.Errorf("failed to get applied migrations: %w", err)
+		return fmt.Errorf("failed to get applied deployments: %w", err)
 	}
 
-	// 3. Compare and get migration status
-	status := CompareMigrations(localMigrations, appliedMigrations)
+	// 3. Compare and get deployment status
+	status := CompareDeployments(localDeployments, appliedDeployments)
 
 	if len(status.Pending) == 0 {
-		fmt.Println("No pending migrations to apply")
+		fmt.Println("No pending deployments to apply")
 		return nil
 	}
 
-	// 4. Dump current schema before migrations
-	schemaBefore, err := mr.db.DumpSchema()
+	// 4. Dump current schema before deployments
+	schemaBefore, err := dr.db.DumpSchema()
 	if err != nil {
-		return fmt.Errorf("failed to dump schema before migrations: %w", err)
+		return fmt.Errorf("failed to dump schema before deployments: %w", err)
 	}
 
-	// 5. Apply all pending migrations using expand-migrate-contract workflow
-	for i, migration := range status.Pending {
-		isHead := i == len(status.Pending)-1 // Last migration is the head
-		if err := mr.applyMigrationWithPhases(ctx, migration, isHead); err != nil {
-			return fmt.Errorf("failed to apply migration %s: %w", migration.ID, err)
+	// 5. Apply all pending deployments using expand-migrate-contract workflow
+	for i, deployment := range status.Pending {
+		isHead := i == len(status.Pending)-1 // Last deployment is the head
+		if err := dr.applyDeploymentWithPhases(ctx, deployment, isHead); err != nil {
+			return fmt.Errorf("failed to apply deployment %s: %w", deployment.ID, err)
 		}
 	}
 
-	// 6. Dump schema after migrations and generate diff
-	schemaAfter, err := mr.db.DumpSchema()
+	// 6. Dump schema after deployments and generate diff
+	schemaAfter, err := dr.db.DumpSchema()
 	if err != nil {
-		return fmt.Errorf("failed to dump schema after migrations: %w", err)
+		return fmt.Errorf("failed to dump schema after deployments: %w", err)
 	}
 
-	if err := mr.generateSchemaDiff(schemaBefore, schemaAfter); err != nil {
+	if err := dr.generateSchemaDiff(schemaBefore, schemaAfter); err != nil {
 		return fmt.Errorf("failed to generate schema diff: %w", err)
 	}
 
-	fmt.Println("All migrations applied successfully!")
+	fmt.Println("All deployments applied successfully!")
 	return nil
 }
 
-// applyMigrationWithPhases applies a migration using the expand-migrate-contract workflow
-func (mr *MigrationRunner) applyMigrationWithPhases(ctx context.Context, migration Migration, isHead bool) error {
-	fmt.Printf("Applying migration %s: %s\n", migration.ID, migration.Name)
+// applyDeploymentWithPhases applies a deployment using the expand-migrate-contract workflow
+func (dr *DeploymentRunner) applyDeploymentWithPhases(ctx context.Context, deployment Deployment, isHead bool) error {
+	fmt.Printf("Applying deployment %s: %s\n", deployment.ID, deployment.Name)
 
 	// Phase 1: Expand - Prepare database for new schema
-	if err := mr.applyPhase(migration, "expand", migration.ExpandScript, migration.ExpandSQLFiles, isHead); err != nil {
+	if err := dr.applyPhase(deployment, "expand", deployment.ExpandScript, deployment.ExpandSQLFiles, isHead); err != nil {
 		return fmt.Errorf("expand phase failed: %w", err)
 	}
 
 	// Phase 2: Migrate - Core schema changes
-	if err := mr.applyPhase(migration, "migrate", migration.MigrateScript, migration.MigrateSQLFiles, isHead); err != nil {
+	if err := dr.applyPhase(deployment, "migrate", deployment.MigrateScript, deployment.MigrateSQLFiles, isHead); err != nil {
 		return fmt.Errorf("migrate phase failed: %w", err)
 	}
 
 	// Phase 3: Contract - Remove old schema elements
-	if err := mr.applyPhase(migration, "contract", migration.ContractScript, migration.ContractSQLFiles, isHead); err != nil {
+	if err := dr.applyPhase(deployment, "contract", deployment.ContractScript, deployment.ContractSQLFiles, isHead); err != nil {
 		return fmt.Errorf("contract phase failed: %w", err)
 	}
 
 	// Phase 4: Post - Validation and testing
-	if err := mr.applyPostPhase(migration, isHead); err != nil {
+	if err := dr.applyPostPhase(deployment, isHead); err != nil {
 		return fmt.Errorf("post phase failed: %w", err)
 	}
 
-	// Record migration as applied
-	checksum := CalculateChecksum(migration)
-	if err := mr.db.RecordMigration(migration, checksum); err != nil {
-		return fmt.Errorf("failed to record migration: %w", err)
+	// Record deployment as applied
+	checksum := CalculateChecksum(deployment)
+	if err := dr.db.RecordDeployment(deployment, checksum); err != nil {
+		return fmt.Errorf("failed to record deployment: %w", err)
 	}
 
-	fmt.Printf("Migration %s applied successfully\n", migration.ID)
+	fmt.Printf("Deployment %s applied successfully\n", deployment.ID)
 	return nil
 }
 
 // applyPhase applies a specific phase (expand, migrate, or contract)
-func (mr *MigrationRunner) applyPhase(migration Migration, phaseName string, script *ScriptFile, sqlFiles []SQLFile, isHead bool) error {
+func (dr *DeploymentRunner) applyPhase(deployment Deployment, phaseName string, script *ScriptFile, sqlFiles []SQLFile, isHead bool) error {
 	// Execute shell script before SQL (if exists)
 	if script != nil {
-		if err := mr.executeScript(script, migration, phaseName, isHead); err != nil {
+		if err := dr.executeScript(script, deployment, phaseName, isHead); err != nil {
 			return fmt.Errorf("script execution failed: %w", err)
 		}
 	}
 
 	// Apply SQL files if they exist
-	if err := mr.applySQLFiles(sqlFiles, phaseName); err != nil {
+	if err := dr.applySQLFiles(sqlFiles, phaseName); err != nil {
 		return fmt.Errorf("SQL execution failed: %w", err)
 	}
 
@@ -123,9 +123,9 @@ func (mr *MigrationRunner) applyPhase(migration Migration, phaseName string, scr
 }
 
 // applyPostPhase applies the post-validation phase
-func (mr *MigrationRunner) applyPostPhase(migration Migration, isHead bool) error {
-	if migration.PostScript != nil {
-		if err := mr.executeScript(migration.PostScript, migration, "post", isHead); err != nil {
+func (dr *DeploymentRunner) applyPostPhase(deployment Deployment, isHead bool) error {
+	if deployment.PostScript != nil {
+		if err := dr.executeScript(deployment.PostScript, deployment, "post", isHead); err != nil {
 			return fmt.Errorf("post-validation failed: %w", err)
 		}
 	}
@@ -133,20 +133,20 @@ func (mr *MigrationRunner) applyPostPhase(migration Migration, isHead bool) erro
 }
 
 // executeScript executes a shell script with ZDD environment variables
-func (mr *MigrationRunner) executeScript(script *ScriptFile, migration Migration, phase string, isHead bool) error {
+func (dr *DeploymentRunner) executeScript(script *ScriptFile, deployment Deployment, phase string, isHead bool) error {
 	// Set environment variables
 	env := map[string]string{
-		"ZDD_IS_HEAD":         fmt.Sprintf("%t", isHead),
-		"ZDD_MIGRATION_ID":    migration.ID,
-		"ZDD_MIGRATION_NAME":  migration.Name,
-		"ZDD_PHASE":           phase,
-		"ZDD_MIGRATIONS_PATH": mr.migrationsPath,
-		"ZDD_DATABASE_URL":    mr.db.ConnectionString(),
+		"ZDD_IS_HEAD":          fmt.Sprintf("%t", isHead),
+		"ZDD_DEPLOYMENT_ID":    deployment.ID,
+		"ZDD_DEPLOYMENT_NAME":  deployment.Name,
+		"ZDD_PHASE":            phase,
+		"ZDD_DEPLOYMENTS_PATH": dr.deploymentsPath,
+		"ZDD_DATABASE_URL":     dr.db.ConnectionString(),
 	}
 
 	fmt.Printf("  Executing %s script: %s\n", phase, script.Path)
 
-	if err := mr.executor.ExecuteCommandWithEnv(script.Path, migration.Directory, env); err != nil {
+	if err := dr.executor.ExecuteCommandWithEnv(script.Path, deployment.Directory, env); err != nil {
 		return fmt.Errorf("failed to execute script: %w", err)
 	}
 
@@ -154,7 +154,7 @@ func (mr *MigrationRunner) executeScript(script *ScriptFile, migration Migration
 }
 
 // applySQLFiles applies a sequence of SQL files in order
-func (mr *MigrationRunner) applySQLFiles(sqlFiles []SQLFile, phase string) error {
+func (dr *DeploymentRunner) applySQLFiles(sqlFiles []SQLFile, phase string) error {
 	// Skip if there's no actual SQL content (just comments/whitespace)
 	if !HasNonEmptySQL(sqlFiles) {
 		return nil
@@ -170,7 +170,7 @@ func (mr *MigrationRunner) applySQLFiles(sqlFiles []SQLFile, phase string) error
 
 		// Execute the entire SQL file content as-is
 		// PostgreSQL can handle multiple statements and comments natively
-		if err := mr.db.ExecuteSQLInTransaction([]string{sqlFile.Content}); err != nil {
+		if err := dr.db.ExecuteSQLInTransaction([]string{sqlFile.Content}); err != nil {
 			return fmt.Errorf("failed to execute %s SQL file %s: %w", phase, sqlFile.Path, err)
 		}
 	}
@@ -178,7 +178,7 @@ func (mr *MigrationRunner) applySQLFiles(sqlFiles []SQLFile, phase string) error
 }
 
 // generateSchemaDiff generates and saves a diff of the schema changes
-func (mr *MigrationRunner) generateSchemaDiff(before, after string) error {
+func (dr *DeploymentRunner) generateSchemaDiff(before, after string) error {
 	// For now, just print the diff - could be enhanced to use external diff tools
 	fmt.Println("\n=== Schema Changes ===")
 	if before == after {

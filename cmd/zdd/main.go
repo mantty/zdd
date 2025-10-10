@@ -31,18 +31,17 @@ func main() {
 				Sources: cli.EnvVars("ZDD_DATABASE_URL"),
 			},
 			&cli.StringFlag{
-				Name:    "migrations-path",
-				Aliases: []string{"m"},
-				Usage:   "Path to migrations directory",
+				Name:    "deployments-path",
+				Aliases: []string{"p"},
+				Usage:   "Path to deployments directory",
 				Value:   "migrations",
-				Sources: cli.EnvVars("ZDD_MIGRATIONS_PATH"),
+				Sources: cli.EnvVars("ZDD_DEPLOYMENTS_PATH"),
 			},
 		},
 		Commands: []*cli.Command{
 			{
-				Name:    "create",
-				Aliases: []string{"new"},
-				Usage:   "Create a new migration",
+				Name:  "create",
+				Usage: "Create a new deployment",
 				Arguments: []cli.Argument{
 					&cli.StringArg{
 						Name:      "name",
@@ -56,13 +55,13 @@ func main() {
 			},
 			{
 				Name:   "list",
-				Usage:  "List migrations and their status",
+				Usage:  "List deployments and their status",
 				Action: listCommand,
 			},
 			{
-				Name:   "migrate",
-				Usage:  "Apply pending migrations",
-				Action: migrateCommand,
+				Name:   "deploy",
+				Usage:  "Apply pending deployments",
+				Action: deployCommand,
 			},
 		},
 	}
@@ -75,28 +74,28 @@ func main() {
 func createCommand(ctx context.Context, cmd *cli.Command) error {
 	name := cmd.StringArg("name")
 	if name == "" {
-		return fmt.Errorf("migration name is required")
+		return fmt.Errorf("deployment name is required")
 	}
 
-	migrationsPath := cmd.String("migrations-path")
+	deploymentsPath := cmd.String("deployments-path")
 
-	migration, err := zdd.CreateMigration(migrationsPath, name)
+	deployment, err := zdd.CreateDeployment(deploymentsPath, name)
 	if err != nil {
-		return fmt.Errorf("failed to create migration: %w", err)
+		return fmt.Errorf("failed to create deployment: %w", err)
 	}
 
-	fmt.Printf("Created migration %s\n", migration.Directory)
+	fmt.Printf("Created deployment %s\n", deployment.Directory)
 
 	return nil
 }
 
 func listCommand(ctx context.Context, cmd *cli.Command) error {
-	migrationsPath := cmd.String("migrations-path")
+	deploymentsPath := cmd.String("deployments-path")
 	databaseURL := cmd.String("database-url")
 
-	// Convert relative migrations path to absolute
+	// Convert relative deployments path to absolute
 	var err error
-	migrationsPath, err = resolveMigrationsPath(migrationsPath)
+	deploymentsPath, err = resolveDeploymentsPath(deploymentsPath)
 	if err != nil {
 		return err
 	}
@@ -111,21 +110,21 @@ func listCommand(ctx context.Context, cmd *cli.Command) error {
 		defer db.Close()
 	}
 
-	return zdd.ListMigrations(migrationsPath, db)
+	return zdd.ListDeployments(deploymentsPath, db)
 }
 
-func migrateCommand(ctx context.Context, cmd *cli.Command) error {
-	migrationsPath := cmd.String("migrations-path")
+func deployCommand(ctx context.Context, cmd *cli.Command) error {
+	deploymentsPath := cmd.String("deployments-path")
 	databaseURL := cmd.String("database-url")
 
-	// Convert relative migrations path to absolute
-	migrationsPath, err := resolveMigrationsPath(migrationsPath)
+	// Convert relative deployments path to absolute
+	deploymentsPath, err := resolveDeploymentsPath(deploymentsPath)
 	if err != nil {
 		return err
 	}
 
 	if databaseURL == "" {
-		return fmt.Errorf("database URL is required for migrations")
+		return fmt.Errorf("database URL is required for deployments")
 	}
 
 	// Connect to database
@@ -135,25 +134,25 @@ func migrateCommand(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer db.Close()
 
-	// Initialize migration schema
-	if err := db.InitMigrationSchema(); err != nil {
-		return fmt.Errorf("failed to initialize migration schema: %w", err)
+	// Initialize deployment schema
+	if err := db.InitDeploymentSchema(); err != nil {
+		return fmt.Errorf("failed to initialize deployment schema: %w", err)
 	}
 
 	// Create runner
 	executor := zdd.NewShellCommandExecutor(0) // Use default timeout
-	runner := zdd.NewMigrationRunner(db, migrationsPath, executor)
+	runner := zdd.NewDeploymentRunner(db, deploymentsPath, executor)
 
-	// Run migrations
-	return runner.RunMigrations(ctx)
+	// Run deployments
+	return runner.RunDeployments(ctx)
 }
 
-// resolveMigrationsPath converts a relative path to absolute, returns path unchanged if already absolute or empty
-func resolveMigrationsPath(path string) (string, error) {
+// resolveDeploymentsPath converts a relative path to absolute, returns path unchanged if already absolute or empty
+func resolveDeploymentsPath(path string) (string, error) {
 	if path != "" && !filepath.IsAbs(path) {
 		abs, err := filepath.Abs(path)
 		if err != nil {
-			return "", fmt.Errorf("failed to resolve migrations path: %w", err)
+			return "", fmt.Errorf("failed to resolve deployments path: %w", err)
 		}
 		return abs, nil
 	}

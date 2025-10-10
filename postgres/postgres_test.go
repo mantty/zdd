@@ -38,16 +38,16 @@ func TestNewDBInitializesMigrationSchema(t *testing.T) {
 	})
 
 	var schemaName string
-	err = db.pool.QueryRow(ctx, "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'zdd_migrations'").Scan(&schemaName)
+	err = db.pool.QueryRow(ctx, "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'zdd_deployments'").Scan(&schemaName)
 	if err != nil {
-		t.Fatalf("expected zdd_migrations schema to exist: %v", err)
+		t.Fatalf("expected zdd_deployments schema to exist: %v", err)
 	}
 
-	if schemaName != "zdd_migrations" {
+	if schemaName != "zdd_deployments" {
 		t.Fatalf("unexpected schema name: %s", schemaName)
 	}
 
-	if err := db.ExecuteSQLInTransaction([]string{"SELECT COUNT(*) FROM zdd_migrations.applied_migrations"}); err != nil {
+	if err := db.ExecuteSQLInTransaction([]string{"SELECT COUNT(*) FROM zdd_deployments.applied_deployments"}); err != nil {
 		t.Fatalf("expected applied_migrations table to exist: %v", err)
 	}
 }

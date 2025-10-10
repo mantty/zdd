@@ -21,7 +21,7 @@ type (
 )
 
 //go:embed assets/setup_schema.sql
-var createMigrationsTableSQL string
+var createDeploymentsTableSQL string
 
 // NewDB creates a new PostgreSQL database connection
 func NewDB(ctx context.Context, databaseURL string) (*DB, error) {
@@ -45,7 +45,7 @@ func NewDB(ctx context.Context, databaseURL string) (*DB, error) {
 		ctx:     ctx,
 		connStr: databaseURL,
 	}
-	if err := db.InitMigrationSchema(); err != nil {
+	if err := db.InitDeploymentSchema(); err != nil {
 		pool.Close()
 		return nil, err
 	}
@@ -64,76 +64,76 @@ func (db *DB) ConnectionString() string {
 	return db.connStr
 }
 
-// InitMigrationSchema creates the zdd_migrations schema and table if they don't exist
-func (db *DB) InitMigrationSchema() error {
-	_, err := db.pool.Exec(db.ctx, createMigrationsTableSQL)
+// InitDeploymentSchema creates the zdd_deployments schema and table if they don't exist
+func (db *DB) InitDeploymentSchema() error {
+	_, err := db.pool.Exec(db.ctx, createDeploymentsTableSQL)
 	if err != nil {
-		return fmt.Errorf("failed to initialize migration schema: %w", err)
+		return fmt.Errorf("failed to initialize deployment schema: %w", err)
 	}
 	return nil
 }
 
-// GetAppliedMigrations returns all migrations that have been applied to the database
-func (db *DB) GetAppliedMigrations() ([]zdd.DBMigrationRecord, error) {
+// GetAppliedDeployments returns all deployments that have been applied to the database
+func (db *DB) GetAppliedDeployments() ([]zdd.DBDeploymentRecord, error) {
 	query := `
 		SELECT id, name, applied_at, COALESCE(checksum, '') as checksum 
-		FROM zdd_migrations.applied_migrations 
+		FROM zdd_deployments.applied_deployments 
 		ORDER BY applied_at ASC
 	`
 
 	rows, err := db.pool.Query(db.ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query applied migrations: %w", err)
+		return nil, fmt.Errorf("failed to query applied deployments: %w", err)
 	}
 	defer rows.Close()
 
-	var migrations []zdd.DBMigrationRecord
+	var deployments []zdd.DBDeploymentRecord
 	for rows.Next() {
-		var m zdd.DBMigrationRecord
-		if err := rows.Scan(&m.ID, &m.Name, &m.AppliedAt, &m.Checksum); err != nil {
-			return nil, fmt.Errorf("failed to scan migration record: %w", err)
+		var d zdd.DBDeploymentRecord
+		if err := rows.Scan(&d.ID, &d.Name, &d.AppliedAt, &d.Checksum); err != nil {
+			return nil, fmt.Errorf("failed to scan deployment record: %w", err)
 		}
-		migrations = append(migrations, m)
+		deployments = append(deployments, d)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating migration records: %w", err)
+		return nil, fmt.Errorf("error iterating deployment records: %w", err)
 	}
 
-	return migrations, nil
+	return deployments, nil
 }
 
-// GetLastAppliedMigration returns the most recently applied migration
-func (db *DB) GetLastAppliedMigration() (*zdd.DBMigrationRecord, error) {
+// GetLastAppliedDeployment returns the most recently applied deployment
+func (db *DB) GetLastAppliedDeployment() (*zdd.DBDeploymentRecord, error) {
 	query := `
 		SELECT id, name, applied_at, COALESCE(checksum, '') as checksum 
-		FROM zdd_migrations.applied_migrations 
+		FROM zdd_deployments.applied_deployments 
 		ORDER BY applied_at DESC 
 		LIMIT 1
 	`
 
-	var m zdd.DBMigrationRecord
-	err := db.pool.QueryRow(db.ctx, query).Scan(&m.ID, &m.Name, &m.AppliedAt, &m.Checksum)
+	var d zdd.DBDeploymentRecord
+	err := db.pool.QueryRow(db.ctx, query).Scan(&d.ID, &d.Name, &d.AppliedAt, &d.Checksum)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil, nil // No migrations applied yet
+			return nil, nil // No deployments applied yet
 		}
-		return nil, fmt.Errorf("failed to get last applied migration: %w", err)
+		return nil, fmt.Errorf("failed to get last applied deployment: %w", err)
 	}
 
-	return &m, nil
+	return &d, nil
 }
 
-// RecordMigration records that a migration has been applied
-func (db *DB) RecordMigration(migration zdd.Migration, checksum string) error {
+// RecordDeployment records that a deployment has been applied
+func (db *DB) RecordDeployment(deployment zdd.Deployment, checksum string) error {
 	query := `
-		INSERT INTO zdd_migrations.applied_migrations (id, name, applied_at, checksum)
+		INSERT INTO zdd_deployments.applied_deployments (id, name, applied_at, checksum)
 		VALUES ($1, $2, NOW(), $3)
 	`
 
-	_, err := db.pool.Exec(db.ctx, query, migration.ID, migration.Name, checksum)
+	_, err := db.pool.Exec(db.ctx, query, deployment.ID, deployment.Name, checksum)
 	if err != nil {
-		return fmt.Errorf("failed to record migration %s: %w", migration.ID, err)
+		return fmt.Errorf("failed to record deployment %s: %w", deployment.ID, err)
 	}
 
 	return nil

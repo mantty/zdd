@@ -3,8 +3,8 @@
 -- Table: public.users
 CREATE TABLE public.users (id integer, email character varying, name character varying, created_at timestamp without time zone);
 
--- Table: zdd_migrations.applied_migrations
-CREATE TABLE zdd_migrations.applied_migrations (id character varying, name character varying, applied_at timestamp with time zone, checksum character varying);
+-- Table: zdd_deployments.applied_deployments
+CREATE TABLE zdd_deployments.applied_deployments (id character varying, name character varying, applied_at timestamp with time zone, checksum character varying);
 
--- Index: idx_applied_migrations_applied_at
-CREATE INDEX idx_applied_migrations_applied_at ON zdd_migrations.applied_migrations USING btree (applied_at);
+-- Index: idx_applied_deployments_applied_at
+CREATE INDEX idx_applied_deployments_applied_at ON zdd_deployments.applied_deployments USING btree (applied_at);

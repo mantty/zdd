@@ -5,12 +5,12 @@ zdd allows users to create and run SQL migrations in multiple steps to ensure mi
 
 ## ZDD functionality
 
-- A user creates a new empty migration with `zdd create`
-- A migration is composed of multiple sql files and commands to be executed
-- The latest migration is applied with `zdd migrate`
-- Migrations apply by running commands, then executing the sql file(s) for that step
+- A user creates a new empty deployment with `zdd create`
+- A deployment is composed of multiple sql files and commands to be executed
+- The latest deployment is applied with `zdd deploy`
+- Deployments apply by running commands, then executing the sql file(s) for that step
 - The steps in order are expand, migrate, contract
-- ZDD keeps track of applied migrations inside the `zdd_migrations` schema
+- ZDD keeps track of applied deployments inside the `zdd_deployments` schema
 
 ## Folder structure
 

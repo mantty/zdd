@@ -1,10 +1,13 @@
 # ZDD - Zero Downtime Deployments
 
-A opinionated CLI tool for managing SQL migrations and app deployments with PostgreSQL, designed around the expand-migrate-contract pattern for zero downtime deployments.
+A opinionat| Flag | Environment Variable | Description |
+|------|---------------------|-------------|
+| `--database-url` | `ZDD_DATABASE_URL` | PostgreSQL connection string |
+| `--deployments-path` | `ZDD_DEPLOYMENTS_PATH` | Path to deployments directory (default: "migrations") |LI tool for managing SQL migrations and app deployments with PostgreSQL, designed around the expand-migrate-contract pattern for zero downtime deployments.
 
 ## Philosophy
 
-ZDD has the following opinions about how migrations should be handled:
+ZDD has the following opinions about how deployments should be handled:
 
 - **Migrations should be written in plain SQL** (no DSLs)
 - **Migrations should be idempotent**
@@ -47,17 +50,17 @@ ZDD can be configured via command line flags or environment variables:
 | Flag | Environment Variable | Description |
 |------|---------------------|-------------|
 | `--database-url` | `ZDD_DATABASE_URL` | PostgreSQL connection string |
-| `--migrations-path` | `ZDD_MIGRATIONS_PATH` | Path to migrations directory (default: "migrations") |
+| `--deployments-path` | `ZDD_DEPLOYMENTS_PATH` | Path to deployments directory (default: "migrations") |
 
 ### Commands
 
-#### Create a new migration
+#### Create a new deployment
 
 ```bash
 zdd create add_users_table
 ```
 
-This creates a new migration directory with a sequential ID:
+This creates a new deployment directory with a sequential ID:
 ```
 migrations/
   000001_add_users_table/
@@ -73,37 +76,37 @@ migrations/
 Each of the above files are optional and can be safely deleted.
 Any deployment stage can have a script, an SQL migration, both, or neither.
 
-#### List migrations
+#### List deployments
 
 ```bash
 zdd list
 ```
 
-Shows the status of all migrations:
+Shows the status of all deployments:
 ```
-Migration Status:
-================
+Deployment Status:
+==================
 
 Applied (1):
   ✓ 000001 - add_users_table (applied: 2023-10-04 12:05:30)
 
 Pending (2):
   ○ 000002 - add_posts_table
-  ○ 000003 - expand_contract_migration
+  ○ 000003 - expand_contract_deployment
 ```
 
-#### Apply migrations
+#### Apply deployments
 
 ```bash
-zdd migrate
+zdd deploy
 ```
 
-Applies all pending migrations following the expand-migrate-contract pattern.
+Applies all pending deployments following the expand-migrate-contract pattern.
 
 
-### Migration Examples
+### Deployment Examples
 
-#### Simple Migration (only pre SQL)
+#### Simple Deployment (only migrate SQL)
 
 ```sql
 -- migrations/000001_add_users_table/migrate.sql
@@ -115,7 +118,7 @@ CREATE TABLE users (
 );
 ```
 
-#### Expand-Contract Migration
+#### Expand-Contract Deployment
 
 ```sql
 -- migrations/000002_add_email_column/expand.sql
@@ -131,14 +134,14 @@ ALTER TABLE users ALTER COLUMN email_verified SET NOT NULL;
 
 #### Numbered SQL Files
 
-For very large migrations, you can use numbered files:
+For very large deployments, you can use numbered files:
 
 ```
-migrations/000003_large_migration/
+migrations/000003_large_deployment/
   expand.1.sql    # First batch
   expand.2.sql    # Second batch  
   expand.3.sql    # Third batch
-  migrate.sql     # Standalone migration step
+  migrate.sql     # Standalone migrate step
   contract.1.sql  # Post-deployment batch 1
   contract.2.sql  # Post-deployment batch 2
 ```
@@ -147,19 +150,19 @@ migrations/000003_large_migration/
 
 ```bash
 export ZDD_DATABASE_URL="postgres://user:password@localhost/mydb"
-export ZDD_MIGRATIONS_PATH="./db/migrations"
+export ZDD_DEPLOYMENTS_PATH="./db/migrations"
 
-zdd migrate
+zdd deploy
 ```
 
 ### Database Schema
 
-ZDD automatically creates a `zdd_migrations` schema to track applied migrations:
+ZDD automatically creates a `zdd_deployments` schema to track applied deployments:
 
 ```sql
-CREATE SCHEMA zdd_migrations;
+CREATE SCHEMA zdd_deployments;
 
-CREATE TABLE zdd_migrations.applied_migrations (
+CREATE TABLE zdd_deployments.applied_deployments (
     id VARCHAR(255) PRIMARY KEY,
     name VARCHAR(500) NOT NULL,
     applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
