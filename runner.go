@@ -5,14 +5,12 @@ import (
 	"fmt"
 )
 
-type (
-	// MigrationRunner handles the core migration execution logic
-	MigrationRunner struct {
-		db             DatabaseProvider
-		migrationsPath string
-		executor       CommandExecutor
-	}
-)
+// MigrationRunner handles the core migration execution logic
+type MigrationRunner struct {
+	db             DatabaseProvider
+	migrationsPath string
+	executor       CommandExecutor
+}
 
 // NewMigrationRunner creates a new migration runner
 func NewMigrationRunner(db DatabaseProvider, migrationsPath string, executor CommandExecutor) *MigrationRunner {
@@ -40,23 +38,18 @@ func (mr *MigrationRunner) RunMigrations(ctx context.Context) error {
 	// 3. Compare and get migration status
 	status := CompareMigrations(localMigrations, appliedMigrations)
 
-	// 4. Validate outstanding migrations
-	if err := ValidateOutstandingMigrations(status.Pending); err != nil {
-		return fmt.Errorf("migration validation failed: %w", err)
-	}
-
 	if len(status.Pending) == 0 {
 		fmt.Println("No pending migrations to apply")
 		return nil
 	}
 
-	// 5. Dump current schema before migrations
+	// 4. Dump current schema before migrations
 	schemaBefore, err := mr.db.DumpSchema()
 	if err != nil {
 		return fmt.Errorf("failed to dump schema before migrations: %w", err)
 	}
 
-	// 6. Apply all pending migrations using expand-migrate-contract workflow
+	// 5. Apply all pending migrations using expand-migrate-contract workflow
 	for i, migration := range status.Pending {
 		isHead := i == len(status.Pending)-1 // Last migration is the head
 		if err := mr.applyMigrationWithPhases(ctx, migration, isHead); err != nil {
@@ -64,7 +57,7 @@ func (mr *MigrationRunner) RunMigrations(ctx context.Context) error {
 		}
 	}
 
-	// 7. Dump schema after migrations and generate diff
+	// 6. Dump schema after migrations and generate diff
 	schemaAfter, err := mr.db.DumpSchema()
 	if err != nil {
 		return fmt.Errorf("failed to dump schema after migrations: %w", err)
@@ -151,12 +144,7 @@ func (mr *MigrationRunner) executeScript(script *ScriptFile, migration Migration
 		"ZDD_DATABASE_URL":    mr.db.ConnectionString(),
 	}
 
-	scriptType := "migration-specific"
-	if script.IsDefault {
-		scriptType = "default"
-	}
-
-	fmt.Printf("  Executing %s %s script: %s\n", scriptType, phase, script.Path)
+	fmt.Printf("  Executing %s script: %s\n", phase, script.Path)
 
 	if err := mr.executor.ExecuteCommandWithEnv(script.Path, migration.Directory, env); err != nil {
 		return fmt.Errorf("failed to execute script: %w", err)

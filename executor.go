@@ -34,35 +34,7 @@ func NewShellCommandExecutor(timeout time.Duration) *ShellCommandExecutor {
 
 // ExecuteCommand executes a single shell command
 func (e *ShellCommandExecutor) ExecuteCommand(command string, workingDir string) error {
-	if strings.TrimSpace(command) == "" {
-		return nil
-	}
-
-	log.Printf("Executing command in directory: %s", workingDir)
-	log.Printf("Running command: %s", command)
-
-	ctx, cancel := context.WithTimeout(context.Background(), e.timeout)
-	defer cancel()
-
-	// Use shell to execute the command so we support pipes, redirects, etc.
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = workingDir
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("command timed out after %v", e.timeout)
-		}
-		return fmt.Errorf("command failed with exit code %d: %s", cmd.ProcessState.ExitCode(), string(output))
-	}
-
-	// Log command output if there is any
-	if len(output) > 0 {
-		log.Printf("Command output: %s", string(output))
-	}
-
-	log.Printf("Command completed successfully")
-	return nil
+	return e.ExecuteCommandWithEnv(command, workingDir, nil)
 }
 
 // ExecuteCommandWithEnv executes a shell command with custom environment variables
@@ -81,11 +53,13 @@ func (e *ShellCommandExecutor) ExecuteCommandWithEnv(command string, workingDir 
 	cmd := exec.CommandContext(ctx, "sh", command)
 	cmd.Dir = workingDir
 
-	// Set environment variables
-	cmd.Env = append(cmd.Environ(), []string{}...)
-	for key, value := range env {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
-		log.Printf("Setting env: %s=%s", key, value)
+	// Set environment variables if provided
+	if env != nil {
+		cmd.Env = append(cmd.Environ(), []string{}...)
+		for key, value := range env {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
+			log.Printf("Setting env: %s=%s", key, value)
+		}
 	}
 
 	output, err := cmd.CombinedOutput()

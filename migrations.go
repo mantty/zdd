@@ -53,9 +53,7 @@ type (
 
 	// ScriptFile represents a shell script file
 	ScriptFile struct {
-		Path      string
-		Content   string
-		IsDefault bool // True if this is a fallback from root directory
+		Path string
 	}
 
 	// MigrationStatus represents the status of migrations in the system
@@ -115,10 +113,10 @@ func LoadMigrations(migrationsPath string) ([]Migration, error) {
 	}
 
 	// Load default scripts from root migrations directory
-	defaultExpandScript := loadDefaultScript(migrationsPath, "expand.sh")
-	defaultMigrateScript := loadDefaultScript(migrationsPath, "migrate.sh")
-	defaultContractScript := loadDefaultScript(migrationsPath, "contract.sh")
-	defaultPostScript := loadDefaultScript(migrationsPath, "post.sh")
+	defaultExpandScript := loadScript(migrationsPath, "expand.sh")
+	defaultMigrateScript := loadScript(migrationsPath, "migrate.sh")
+	defaultContractScript := loadScript(migrationsPath, "contract.sh")
+	defaultPostScript := loadScript(migrationsPath, "post.sh")
 
 	migrationDirs := make(map[string]string) // id -> directory name
 	for _, entry := range entries {
@@ -132,9 +130,7 @@ func LoadMigrations(migrationsPath string) ([]Migration, error) {
 		}
 
 		id := matches[1]
-		name := matches[2]
 		migrationDirs[id] = entry.Name()
-		_ = name // We'll use this when creating Migration structs
 	}
 
 	var migrations []Migration
@@ -213,32 +209,13 @@ func loadSQLFiles(migrationPath string, entries []os.DirEntry, pattern *regexp.R
 // loadScript loads a shell script from a directory, returns nil if not found
 func loadScript(dir, filename string) *ScriptFile {
 	filePath := filepath.Join(dir, filename)
-	content, err := os.ReadFile(filePath)
-	if err != nil {
+	if _, err := os.Stat(filePath); err != nil {
 		// Script doesn't exist, which is fine
 		return nil
 	}
 
 	return &ScriptFile{
-		Path:      filePath,
-		Content:   string(content),
-		IsDefault: false,
-	}
-}
-
-// loadDefaultScript loads a default shell script from the migrations root directory
-func loadDefaultScript(migrationsPath, filename string) *ScriptFile {
-	filePath := filepath.Join(migrationsPath, filename)
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		// Default script doesn't exist, which is fine
-		return nil
-	}
-
-	return &ScriptFile{
-		Path:      filePath,
-		Content:   string(content),
-		IsDefault: true,
+		Path: filePath,
 	}
 }
 
@@ -326,43 +303,26 @@ func CreateMigration(migrationsPath, name string) (*Migration, error) {
 		return nil, fmt.Errorf("failed to create migration directory: %w", err)
 	}
 
-	// Create empty expand.sql, migrate.sql, and contract.sql files
-	expandSQLPath := filepath.Join(migrationPath, "expand.sql")
-	migrateSQLPath := filepath.Join(migrationPath, "migrate.sql")
-	contractSQLPath := filepath.Join(migrationPath, "contract.sql")
-
-	if err := os.WriteFile(expandSQLPath, []byte("-- Expand phase SQL (optional)\n-- Add new columns, tables, etc. that are backward compatible\n"), 0644); err != nil {
-		return nil, fmt.Errorf("failed to create expand.sql: %w", err)
+	// Define migration files to create
+	files := []struct {
+		path    string
+		content string
+		mode    os.FileMode
+	}{
+		{filepath.Join(migrationPath, "expand.sql"), "-- Expand phase SQL (optional)\n-- Add new columns, tables, etc. that are backward compatible\n", 0644},
+		{filepath.Join(migrationPath, "migrate.sql"), "-- Migrate phase SQL (optional)\n-- Core schema changes, data transformations\n", 0644},
+		{filepath.Join(migrationPath, "contract.sql"), "-- Contract phase SQL (optional)\n-- Remove old columns, tables, etc. no longer needed\n", 0644},
+		{filepath.Join(migrationPath, "expand.sh"), expandScriptTemplate, 0755},
+		{filepath.Join(migrationPath, "migrate.sh"), migrateScriptTemplate, 0755},
+		{filepath.Join(migrationPath, "contract.sh"), contractScriptTemplate, 0755},
+		{filepath.Join(migrationPath, "post.sh"), postScriptTemplate, 0755},
 	}
 
-	if err := os.WriteFile(migrateSQLPath, []byte("-- Migrate phase SQL (optional)\n-- Core schema changes, data transformations\n"), 0644); err != nil {
-		return nil, fmt.Errorf("failed to create migrate.sql: %w", err)
-	}
-
-	if err := os.WriteFile(contractSQLPath, []byte("-- Contract phase SQL (optional)\n-- Remove old columns, tables, etc. no longer needed\n"), 0644); err != nil {
-		return nil, fmt.Errorf("failed to create contract.sql: %w", err)
-	}
-
-	// Create shell script files (expand.sh, migrate.sh, contract.sh, post.sh)
-	expandScriptPath := filepath.Join(migrationPath, "expand.sh")
-	migrateScriptPath := filepath.Join(migrationPath, "migrate.sh")
-	contractScriptPath := filepath.Join(migrationPath, "contract.sh")
-	postScriptPath := filepath.Join(migrationPath, "post.sh")
-
-	if err := os.WriteFile(expandScriptPath, []byte(expandScriptTemplate), 0755); err != nil {
-		return nil, fmt.Errorf("failed to create expand.sh: %w", err)
-	}
-
-	if err := os.WriteFile(migrateScriptPath, []byte(migrateScriptTemplate), 0755); err != nil {
-		return nil, fmt.Errorf("failed to create migrate.sh: %w", err)
-	}
-
-	if err := os.WriteFile(contractScriptPath, []byte(contractScriptTemplate), 0755); err != nil {
-		return nil, fmt.Errorf("failed to create contract.sh: %w", err)
-	}
-
-	if err := os.WriteFile(postScriptPath, []byte(postScriptTemplate), 0755); err != nil {
-		return nil, fmt.Errorf("failed to create post.sh: %w", err)
+	// Create all migration files
+	for _, f := range files {
+		if err := os.WriteFile(f.path, []byte(f.content), f.mode); err != nil {
+			return nil, fmt.Errorf("failed to create %s: %w", filepath.Base(f.path), err)
+		}
 	}
 
 	migration := &Migration{
@@ -370,21 +330,6 @@ func CreateMigration(migrationsPath, name string) (*Migration, error) {
 		Name:      name,
 		CreatedAt: time.Now(),
 		Directory: migrationPath,
-		ExpandSQLFiles: []SQLFile{{
-			Path:     expandSQLPath,
-			Sequence: 0,
-			Content:  "-- Expand phase SQL (optional)\n-- Add new columns, tables, etc. that are backward compatible\n",
-		}},
-		MigrateSQLFiles: []SQLFile{{
-			Path:     migrateSQLPath,
-			Sequence: 0,
-			Content:  "-- Migrate phase SQL (optional)\n-- Core schema changes, data transformations\n",
-		}},
-		ContractSQLFiles: []SQLFile{{
-			Path:     contractSQLPath,
-			Sequence: 0,
-			Content:  "-- Contract phase SQL (optional)\n-- Remove old columns, tables, etc. no longer needed\n",
-		}},
 	}
 
 	return migration, nil
@@ -479,10 +424,72 @@ func HasNonEmptySQL(sqlFiles []SQLFile) bool {
 	return false
 }
 
-// ValidateOutstandingMigrations validates pending migrations
-// With shell script support, users have full control via ZDD_IS_HEAD environment variable
-// so we don't need to restrict multiple pending migrations
-func ValidateOutstandingMigrations(pending []Migration) error {
-	// No validation needed - users control execution flow via scripts
+// ListMigrations loads migrations, optionally compares with database, and outputs a formatted status report
+func ListMigrations(migrationsPath string, db DatabaseProvider) error {
+	// Load local migrations
+	localMigrations, err := LoadMigrations(migrationsPath)
+	if err != nil {
+		return fmt.Errorf("failed to load local migrations: %w", err)
+	}
+
+	// Get applied migrations from database if connected
+	var appliedMigrations []DBMigrationRecord
+	if db != nil {
+		if err := db.InitMigrationSchema(); err != nil {
+			return fmt.Errorf("failed to initialize migration schema: %w", err)
+		}
+
+		appliedMigrations, err = db.GetAppliedMigrations()
+		if err != nil {
+			return fmt.Errorf("failed to get applied migrations: %w", err)
+		}
+	}
+
+	// Compare and display
+	status := CompareMigrations(localMigrations, appliedMigrations)
+
+	fmt.Println("Migration Status:")
+	fmt.Println("================")
+
+	if len(status.Applied) > 0 {
+		fmt.Printf("\nApplied (%d):\n", len(status.Applied))
+		for _, m := range status.Applied {
+			fmt.Printf("  ✓ %s - %s (applied: %s)\n", m.ID, m.Name, m.AppliedAt.Format("2006-01-02 15:04:05"))
+		}
+	}
+
+	if len(status.Pending) > 0 {
+		fmt.Printf("\nPending (%d):\n", len(status.Pending))
+		for _, m := range status.Pending {
+			var phases []string
+			if HasNonEmptySQL(m.ExpandSQLFiles) {
+				phases = append(phases, "expand")
+			}
+			if HasNonEmptySQL(m.MigrateSQLFiles) {
+				phases = append(phases, "migrate")
+			}
+			if HasNonEmptySQL(m.ContractSQLFiles) {
+				phases = append(phases, "contract")
+			}
+
+			phaseInfo := ""
+			if len(phases) > 0 {
+				phaseInfo = fmt.Sprintf(" [%s]", strings.Join(phases, "+"))
+			}
+			fmt.Printf("  ○ %s - %s%s\n", m.ID, m.Name, phaseInfo)
+		}
+	}
+
+	if len(status.Missing) > 0 {
+		fmt.Printf("\nMissing Locally (%d):\n", len(status.Missing))
+		for _, m := range status.Missing {
+			fmt.Printf("  ! %s - %s (applied: %s)\n", m.ID, m.Name, m.AppliedAt.Format("2006-01-02 15:04:05"))
+		}
+	}
+
+	if len(status.Pending) == 0 && len(status.Missing) == 0 {
+		fmt.Println("\nAll migrations are up to date!")
+	}
+
 	return nil
 }

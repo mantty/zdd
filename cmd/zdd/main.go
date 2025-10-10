@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/mantty/zdd"
 	"github.com/mantty/zdd/postgres"
@@ -37,12 +36,6 @@ func main() {
 				Usage:   "Path to migrations directory",
 				Value:   "migrations",
 				Sources: cli.EnvVars("ZDD_MIGRATIONS_PATH"),
-			},
-			&cli.StringFlag{
-				Name:    "deploy-command",
-				Aliases: []string{"c"},
-				Usage:   "Command to run for deployment (e.g., 'npm deploy')",
-				Sources: cli.EnvVars("ZDD_DEPLOY_COMMAND"),
 			},
 		},
 		Commands: []*cli.Command{
@@ -102,92 +95,23 @@ func listCommand(ctx context.Context, cmd *cli.Command) error {
 	databaseURL := cmd.String("database-url")
 
 	// Convert relative migrations path to absolute
-	if migrationsPath != "" && !filepath.IsAbs(migrationsPath) {
-		abs, err := filepath.Abs(migrationsPath)
-		if err != nil {
-			return fmt.Errorf("failed to resolve migrations path: %w", err)
-		}
-		migrationsPath = abs
-	}
-
-	// Load local migrations
-	localMigrations, err := zdd.LoadMigrations(migrationsPath)
+	var err error
+	migrationsPath, err = resolveMigrationsPath(migrationsPath)
 	if err != nil {
-		return fmt.Errorf("failed to load local migrations: %w", err)
+		return err
 	}
 
-	// Connect to database and get applied migrations
-	var appliedMigrations []zdd.DBMigrationRecord
+	// Connect to database if URL provided
+	var db zdd.DatabaseProvider
 	if databaseURL != "" {
-		db, err := postgres.NewDB(ctx, databaseURL)
+		db, err = newDatabase(ctx, databaseURL)
 		if err != nil {
 			return fmt.Errorf("failed to connect to database: %w", err)
 		}
 		defer db.Close()
-
-		if err := db.InitMigrationSchema(); err != nil {
-			return fmt.Errorf("failed to initialize migration schema: %w", err)
-		}
-
-		appliedMigrations, err = db.GetAppliedMigrations()
-		if err != nil {
-			return fmt.Errorf("failed to get applied migrations: %w", err)
-		}
 	}
 
-	// Compare migrations
-	status := zdd.CompareMigrations(localMigrations, appliedMigrations)
-
-	// Display results
-	fmt.Println("Migration Status:")
-	fmt.Println("================")
-
-	if len(status.Applied) > 0 {
-		fmt.Printf("\nApplied (%d):\n", len(status.Applied))
-		for _, m := range status.Applied {
-			fmt.Printf("  ✓ %s - %s (applied: %s)\n", m.ID, m.Name, m.AppliedAt.Format("2006-01-02 15:04:05"))
-		}
-	}
-
-	if len(status.Pending) > 0 {
-		fmt.Printf("\nPending (%d):\n", len(status.Pending))
-		for _, m := range status.Pending {
-			hasExpandSQL := zdd.HasNonEmptySQL(m.ExpandSQLFiles)
-			hasMigrateSQL := zdd.HasNonEmptySQL(m.MigrateSQLFiles)
-			hasContractSQL := zdd.HasNonEmptySQL(m.ContractSQLFiles)
-
-			var flags []string
-			if hasExpandSQL {
-				flags = append(flags, "expand")
-			}
-			if hasMigrateSQL {
-				flags = append(flags, "migrate")
-			}
-			if hasContractSQL {
-				flags = append(flags, "contract")
-			}
-
-			flagStr := ""
-			if len(flags) > 0 {
-				flagStr = fmt.Sprintf(" [%s]", strings.Join(flags, "+"))
-			}
-
-			fmt.Printf("  ○ %s - %s%s\n", m.ID, m.Name, flagStr)
-		}
-	}
-
-	if len(status.Missing) > 0 {
-		fmt.Printf("\nMissing Locally (%d):\n", len(status.Missing))
-		for _, m := range status.Missing {
-			fmt.Printf("  ! %s - %s (applied: %s)\n", m.ID, m.Name, m.AppliedAt.Format("2006-01-02 15:04:05"))
-		}
-	}
-
-	if len(status.Pending) == 0 && len(status.Missing) == 0 {
-		fmt.Println("\nAll migrations are up to date!")
-	}
-
-	return nil
+	return zdd.ListMigrations(migrationsPath, db)
 }
 
 func migrateCommand(ctx context.Context, cmd *cli.Command) error {
@@ -195,12 +119,9 @@ func migrateCommand(ctx context.Context, cmd *cli.Command) error {
 	databaseURL := cmd.String("database-url")
 
 	// Convert relative migrations path to absolute
-	if migrationsPath != "" && !filepath.IsAbs(migrationsPath) {
-		abs, err := filepath.Abs(migrationsPath)
-		if err != nil {
-			return fmt.Errorf("failed to resolve migrations path: %w", err)
-		}
-		migrationsPath = abs
+	migrationsPath, err := resolveMigrationsPath(migrationsPath)
+	if err != nil {
+		return err
 	}
 
 	if databaseURL == "" {
@@ -208,7 +129,7 @@ func migrateCommand(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	// Connect to database
-	db, err := postgres.NewDB(ctx, databaseURL)
+	db, err := newDatabase(ctx, databaseURL)
 	if err != nil {
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -225,4 +146,27 @@ func migrateCommand(ctx context.Context, cmd *cli.Command) error {
 
 	// Run migrations
 	return runner.RunMigrations(ctx)
+}
+
+// resolveMigrationsPath converts a relative path to absolute, returns path unchanged if already absolute or empty
+func resolveMigrationsPath(path string) (string, error) {
+	if path != "" && !filepath.IsAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve migrations path: %w", err)
+		}
+		return abs, nil
+	}
+	return path, nil
+}
+
+// newDatabase creates a new database connection
+// Currently only supports PostgreSQL
+func newDatabase(ctx context.Context, databaseURL string) (zdd.DatabaseProvider, error) {
+	if databaseURL == "" {
+		return nil, fmt.Errorf("database URL is required")
+	}
+
+	// For now, we only support PostgreSQL
+	return postgres.NewDB(ctx, databaseURL)
 }

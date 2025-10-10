@@ -91,6 +91,11 @@ func createTestMigrationDir(t *testing.T) string {
 	return migrationsDir
 }
 
+// getMigrationFilePath returns the path to a specific SQL file for a migration
+func getMigrationFilePath(m *zdd.Migration, fileName string) string {
+	return filepath.Join(m.Directory, fileName)
+}
+
 func TestMigrationManager_CreateMigration(t *testing.T) {
 	migrationsDir := createTestMigrationDir(t)
 
@@ -106,24 +111,35 @@ func TestMigrationManager_CreateMigration(t *testing.T) {
 	if migration.Name != "test_migration" {
 		t.Errorf("Expected migration name 'test_migration', got '%s'", migration.Name)
 	}
-	if len(migration.ExpandSQLFiles) != 1 {
-		t.Errorf("Expected 1 expand SQL file, got %d", len(migration.ExpandSQLFiles))
+
+	// Load the migration to verify files were created
+	migrations, err := zdd.LoadMigrations(migrationsDir)
+	if err != nil {
+		t.Fatalf("Failed to load migrations: %v", err)
 	}
-	if len(migration.MigrateSQLFiles) != 1 {
-		t.Errorf("Expected 1 migrate SQL file, got %d", len(migration.MigrateSQLFiles))
+	if len(migrations) != 1 {
+		t.Fatalf("Expected 1 migration, got %d", len(migrations))
 	}
-	if len(migration.ContractSQLFiles) != 1 {
-		t.Errorf("Expected 1 contract SQL file, got %d", len(migration.ContractSQLFiles))
+
+	loadedMigration := migrations[0]
+	if len(loadedMigration.ExpandSQLFiles) != 1 {
+		t.Errorf("Expected 1 expand SQL file, got %d", len(loadedMigration.ExpandSQLFiles))
+	}
+	if len(loadedMigration.MigrateSQLFiles) != 1 {
+		t.Errorf("Expected 1 migrate SQL file, got %d", len(loadedMigration.MigrateSQLFiles))
+	}
+	if len(loadedMigration.ContractSQLFiles) != 1 {
+		t.Errorf("Expected 1 contract SQL file, got %d", len(loadedMigration.ContractSQLFiles))
 	}
 
 	// Verify files were created
-	if _, err := os.Stat(migration.ExpandSQLFiles[0].Path); os.IsNotExist(err) {
+	if _, err := os.Stat(loadedMigration.ExpandSQLFiles[0].Path); os.IsNotExist(err) {
 		t.Error("Expand SQL file should exist")
 	}
-	if _, err := os.Stat(migration.MigrateSQLFiles[0].Path); os.IsNotExist(err) {
+	if _, err := os.Stat(loadedMigration.MigrateSQLFiles[0].Path); os.IsNotExist(err) {
 		t.Error("Migrate SQL file should exist")
 	}
-	if _, err := os.Stat(migration.ContractSQLFiles[0].Path); os.IsNotExist(err) {
+	if _, err := os.Stat(loadedMigration.ContractSQLFiles[0].Path); os.IsNotExist(err) {
 		t.Error("Contract SQL file should exist")
 	}
 }
@@ -131,26 +147,32 @@ func TestMigrationManager_CreateMigration(t *testing.T) {
 func TestMigrationManager_LoadMigrations(t *testing.T) {
 	migrationsDir := createTestMigrationDir(t)
 
-	// Create a test migration
+	// Create first migration
 	migration1, err := zdd.CreateMigration(migrationsDir, "first_migration")
 	if err != nil {
 		t.Fatalf("Failed to create first migration: %v", err)
 	}
 
-	// Add some SQL content
-	testSQL := "CREATE TABLE test_users (id SERIAL PRIMARY KEY, name VARCHAR(255));"
-	if err := os.WriteFile(migration1.ExpandSQLFiles[0].Path, []byte(testSQL), 0644); err != nil {
-		t.Fatalf("Failed to write test SQL: %v", err)
-	}
-
-	// Create another migration
+	// Create second migration
 	migration2, err := zdd.CreateMigration(migrationsDir, "second_migration")
 	if err != nil {
 		t.Fatalf("Failed to create second migration: %v", err)
 	}
 
-	// Load migrations
+	// Load migrations to get file paths
 	migrations, err := zdd.LoadMigrations(migrationsDir)
+	if err != nil {
+		t.Fatalf("Failed to load migrations: %v", err)
+	}
+
+	// Add some SQL content to the first migration's expand.sql
+	testSQL := "CREATE TABLE test_users (id SERIAL PRIMARY KEY, name VARCHAR(255));"
+	if err := os.WriteFile(migrations[0].ExpandSQLFiles[0].Path, []byte(testSQL), 0644); err != nil {
+		t.Fatalf("Failed to write test SQL: %v", err)
+	}
+
+	// Load migrations again to verify content
+	migrations, err = zdd.LoadMigrations(migrationsDir)
 	if err != nil {
 		t.Fatalf("Failed to load migrations: %v", err)
 	}
@@ -214,7 +236,7 @@ CREATE TABLE test_users (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 `
-	if err := os.WriteFile(migration.ExpandSQLFiles[0].Path, []byte(createTableSQL), 0644); err != nil {
+	if err := os.WriteFile(getMigrationFilePath(migration, "expand.sql"), []byte(createTableSQL), 0644); err != nil {
 		t.Fatalf("Failed to write SQL: %v", err)
 	}
 
@@ -257,7 +279,7 @@ func TestMigrationRunner_ExpandContractPattern(t *testing.T) {
 	}
 
 	baseSQL := `CREATE TABLE test_users (id SERIAL PRIMARY KEY, name VARCHAR(255) NOT NULL);`
-	if err := os.WriteFile(baseMigration.ExpandSQLFiles[0].Path, []byte(baseSQL), 0644); err != nil {
+	if err := os.WriteFile(getMigrationFilePath(baseMigration, "expand.sql"), []byte(baseSQL), 0644); err != nil {
 		t.Fatalf("Failed to write base SQL: %v", err)
 	}
 
@@ -277,13 +299,13 @@ func TestMigrationRunner_ExpandContractPattern(t *testing.T) {
 
 	// Pre-migration: Add column as nullable
 	preSQL := `ALTER TABLE test_users ADD COLUMN email VARCHAR(255);`
-	if err := os.WriteFile(expandContractMigration.ExpandSQLFiles[0].Path, []byte(preSQL), 0644); err != nil {
+	if err := os.WriteFile(getMigrationFilePath(expandContractMigration, "expand.sql"), []byte(preSQL), 0644); err != nil {
 		t.Fatalf("Failed to write pre SQL: %v", err)
 	}
 
 	// Post-migration: Make column required
 	postSQL := `ALTER TABLE test_users ALTER COLUMN email SET NOT NULL;`
-	if err := os.WriteFile(expandContractMigration.ContractSQLFiles[0].Path, []byte(postSQL), 0644); err != nil {
+	if err := os.WriteFile(getMigrationFilePath(expandContractMigration, "contract.sql"), []byte(postSQL), 0644); err != nil {
 		t.Fatalf("Failed to write post SQL: %v", err)
 	}
 
