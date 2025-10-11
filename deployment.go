@@ -163,10 +163,17 @@ func loadSQLFile(deploymentPath string, entries []os.DirEntry, pattern *regexp.R
 			return nil, fmt.Errorf("failed to read %s file %s: %w", errorContext, filePath, err)
 		}
 
-		return &SQLFile{
+		sqlFile := &SQLFile{
 			Path:    filePath,
 			Content: string(content),
-		}, nil
+		}
+
+		// If the file is empty or contains only comments/whitespace, treat it as if it doesn't exist
+		if !IsNonEmptySQL(sqlFile) {
+			return nil, nil
+		}
+
+		return sqlFile, nil
 	}
 
 	return nil, nil

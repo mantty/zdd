@@ -202,7 +202,25 @@ func TestDeploymentManager_CreateDeployment(t *testing.T) {
 		t.Errorf("Expected deployment name 'test_deployment', got '%s'", deployment.Name)
 	}
 
-	// Load the deployment to verify files were created
+	// Verify files were created on disk (check filesystem directly)
+	deploymentDir := filepath.Join(deploymentsDir, deployment.ID+"_"+deployment.Name)
+
+	expandPath := filepath.Join(deploymentDir, "expand.sql")
+	if _, err := os.Stat(expandPath); os.IsNotExist(err) {
+		t.Error("Expand SQL file should exist on disk")
+	}
+
+	migratePath := filepath.Join(deploymentDir, "migrate.sql")
+	if _, err := os.Stat(migratePath); os.IsNotExist(err) {
+		t.Error("Migrate SQL file should exist on disk")
+	}
+
+	contractPath := filepath.Join(deploymentDir, "contract.sql")
+	if _, err := os.Stat(contractPath); os.IsNotExist(err) {
+		t.Error("Contract SQL file should exist on disk")
+	}
+
+	// Load the deployment - empty files should not be loaded
 	deployments, err := zdd.LoadDeployments(deploymentsDir)
 	if err != nil {
 		t.Fatalf("Failed to load deployments: %v", err)
@@ -212,31 +230,15 @@ func TestDeploymentManager_CreateDeployment(t *testing.T) {
 	}
 
 	loadedDeployment := deployments[0]
-	if loadedDeployment.ExpandSQLFile == nil {
-		t.Error("Expected expand SQL file, got nil")
-	}
-	if loadedDeployment.MigrateSQLFile == nil {
-		t.Error("Expected migrate SQL file, got nil")
-	}
-	if loadedDeployment.ContractSQLFile == nil {
-		t.Error("Expected contract SQL file, got nil")
-	}
-
-	// Verify files were created
+	// Since files are empty, they should not be loaded (should be nil)
 	if loadedDeployment.ExpandSQLFile != nil {
-		if _, err := os.Stat(loadedDeployment.ExpandSQLFile.Path); os.IsNotExist(err) {
-			t.Error("Expand SQL file should exist")
-		}
+		t.Error("Expected expand SQL file to be nil (file is empty)")
 	}
 	if loadedDeployment.MigrateSQLFile != nil {
-		if _, err := os.Stat(loadedDeployment.MigrateSQLFile.Path); os.IsNotExist(err) {
-			t.Error("Migrate SQL file should exist")
-		}
+		t.Error("Expected migrate SQL file to be nil (file is empty)")
 	}
 	if loadedDeployment.ContractSQLFile != nil {
-		if _, err := os.Stat(loadedDeployment.ContractSQLFile.Path); os.IsNotExist(err) {
-			t.Error("Contract SQL file should exist")
-		}
+		t.Error("Expected contract SQL file to be nil (file is empty)")
 	}
 }
 
@@ -255,24 +257,16 @@ func TestDeploymentManager_LoadDeployments(t *testing.T) {
 		t.Fatalf("Failed to create second deployment: %v", err)
 	}
 
-	// Load deployments to get file paths
-	deployments, err := zdd.LoadDeployments(deploymentsDir)
-	if err != nil {
-		t.Fatalf("Failed to load deployments: %v", err)
-	}
-
-	// Add some SQL content to the first deployment's expand.sql
+	// Write SQL content to the first deployment's expand.sql (using filesystem path directly)
 	testSQL := "CREATE TABLE test_users (id SERIAL PRIMARY KEY, name VARCHAR(255));"
-	if deployments[0].ExpandSQLFile != nil {
-		if err := os.WriteFile(deployments[0].ExpandSQLFile.Path, []byte(testSQL), 0644); err != nil {
-			t.Fatalf("Failed to write test SQL: %v", err)
-		}
-	} else {
-		t.Fatal("Expected expand SQL file to exist")
+	deployment1Dir := filepath.Join(deploymentsDir, deployment1.ID+"_"+deployment1.Name)
+	expandPath := filepath.Join(deployment1Dir, "expand.sql")
+	if err := os.WriteFile(expandPath, []byte(testSQL), 0644); err != nil {
+		t.Fatalf("Failed to write test SQL: %v", err)
 	}
 
-	// Load deployments again to verify content
-	deployments, err = zdd.LoadDeployments(deploymentsDir)
+	// Load deployments to verify content
+	deployments, err := zdd.LoadDeployments(deploymentsDir)
 	if err != nil {
 		t.Fatalf("Failed to load deployments: %v", err)
 	}
