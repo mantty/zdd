@@ -14,10 +14,10 @@ const defaultScriptTimeout = 5 * time.Minute
 
 type (
 	Task struct {
-		DeploymentID string // Deployment ID this task belongs to
-		TaskType     string // 'sql' or 'script'
-		Path         string // Path to the file to execute
-		Phase        string // Phase name (e.g., 'expand', 'migrate', 'contract', 'post')
+		TaskType   string // 'sql' or 'script'
+		Path       string // Path to the file to execute
+		Phase      string // Phase name (e.g., 'expand', 'migrate', 'contract', 'post')
+		Deployment *Deployment
 	}
 
 	Plan struct {
@@ -77,50 +77,41 @@ func (p *Plan) Execute() error {
 		return fmt.Errorf("failed to dump schema before deployments: %w", err)
 	}
 
-	// Load deployments to get metadata for execution
-	localDeployments, err := LoadDeployments(p.deploymentsPath)
-	if err != nil {
-		return fmt.Errorf("failed to load deployments: %w", err)
-	}
-
-	// Build deployment map for quick lookup
-	deploymentMap := make(map[string]Deployment)
-	for _, d := range localDeployments {
-		deploymentMap[d.ID] = d
-	}
-
 	// Determine which deployment is the head (last pending)
 	// Since BuildPlan only includes tasks from pending deployments,
 	// the last task belongs to the last pending deployment
 	var lastPendingID string
 	if len(p.Tasks) > 0 {
-		lastPendingID = p.Tasks[len(p.Tasks)-1].DeploymentID
+		lastPendingID = p.Tasks[len(p.Tasks)-1].Deployment.ID
 	}
 
 	// Track which deployments we've started and completed
 	startedDeployments := make(map[string]bool)
-	completedDeployments := make(map[string]bool)
+	completedDeployments := make(map[string]*Deployment)
 
 	for _, task := range p.Tasks {
 		// Check if this deployment is already applied (skip entire deployment)
-		if p.AlreadyDeployed[task.DeploymentID] {
+		if p.AlreadyDeployed[task.Deployment.ID] {
 			continue
 		}
 
-		deployment := deploymentMap[task.DeploymentID]
-		isHead := task.DeploymentID == lastPendingID
+		if task.Deployment == nil {
+			return fmt.Errorf("task %s missing deployment metadata", task.Path)
+		}
+		deployment := task.Deployment
+		isHead := task.Deployment.ID == lastPendingID
 
 		// Print deployment header when we first encounter it
-		if !startedDeployments[task.DeploymentID] {
+		if !startedDeployments[task.Deployment.ID] {
 			fmt.Printf("Applying deployment %s: %s\n", deployment.ID, deployment.Name)
-			startedDeployments[task.DeploymentID] = true
+			startedDeployments[task.Deployment.ID] = true
 		}
 
 		// Execute the task based on its type
 		switch task.TaskType {
 		case "script":
-			if err := p.ExecuteScript(task.Path, deployment, task.Phase, isHead); err != nil {
-				return fmt.Errorf("failed to execute %s script for deployment %s: %w", task.Phase, task.DeploymentID, err)
+			if err := p.ExecuteScript(task.Path, *deployment, task.Phase, isHead); err != nil {
+				return fmt.Errorf("failed to execute %s script for deployment %s: %w", task.Phase, task.Deployment.ID, err)
 			}
 
 		case "sql":
@@ -140,14 +131,13 @@ func (p *Plan) Execute() error {
 		}
 
 		// Mark deployment as completed
-		completedDeployments[task.DeploymentID] = true
+		completedDeployments[task.Deployment.ID] = deployment
 	}
 
 	// Record all completed deployments to the database
-	for deploymentID := range completedDeployments {
-		deployment := deploymentMap[deploymentID]
-		checksum := CalculateChecksum(deployment)
-		if err := p.db.RecordDeployment(deployment, checksum); err != nil {
+	for deploymentID, deployment := range completedDeployments {
+		checksum := CalculateChecksum(*deployment)
+		if err := p.db.RecordDeployment(*deployment, checksum); err != nil {
 			return fmt.Errorf("failed to record deployment %s: %w", deploymentID, err)
 		}
 		fmt.Printf("Deployment %s applied successfully\n", deploymentID)

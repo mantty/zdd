@@ -122,25 +122,31 @@ func TestDeploymentManager_CreateDeployment(t *testing.T) {
 	}
 
 	loadedDeployment := deployments[0]
-	if len(loadedDeployment.ExpandSQLFiles) != 1 {
-		t.Errorf("Expected 1 expand SQL file, got %d", len(loadedDeployment.ExpandSQLFiles))
+	if loadedDeployment.ExpandSQLFile == nil {
+		t.Error("Expected expand SQL file, got nil")
 	}
-	if len(loadedDeployment.MigrateSQLFiles) != 1 {
-		t.Errorf("Expected 1 migrate SQL file, got %d", len(loadedDeployment.MigrateSQLFiles))
+	if loadedDeployment.MigrateSQLFile == nil {
+		t.Error("Expected migrate SQL file, got nil")
 	}
-	if len(loadedDeployment.ContractSQLFiles) != 1 {
-		t.Errorf("Expected 1 contract SQL file, got %d", len(loadedDeployment.ContractSQLFiles))
+	if loadedDeployment.ContractSQLFile == nil {
+		t.Error("Expected contract SQL file, got nil")
 	}
 
 	// Verify files were created
-	if _, err := os.Stat(loadedDeployment.ExpandSQLFiles[0].Path); os.IsNotExist(err) {
-		t.Error("Expand SQL file should exist")
+	if loadedDeployment.ExpandSQLFile != nil {
+		if _, err := os.Stat(loadedDeployment.ExpandSQLFile.Path); os.IsNotExist(err) {
+			t.Error("Expand SQL file should exist")
+		}
 	}
-	if _, err := os.Stat(loadedDeployment.MigrateSQLFiles[0].Path); os.IsNotExist(err) {
-		t.Error("Migrate SQL file should exist")
+	if loadedDeployment.MigrateSQLFile != nil {
+		if _, err := os.Stat(loadedDeployment.MigrateSQLFile.Path); os.IsNotExist(err) {
+			t.Error("Migrate SQL file should exist")
+		}
 	}
-	if _, err := os.Stat(loadedDeployment.ContractSQLFiles[0].Path); os.IsNotExist(err) {
-		t.Error("Contract SQL file should exist")
+	if loadedDeployment.ContractSQLFile != nil {
+		if _, err := os.Stat(loadedDeployment.ContractSQLFile.Path); os.IsNotExist(err) {
+			t.Error("Contract SQL file should exist")
+		}
 	}
 }
 
@@ -167,8 +173,12 @@ func TestDeploymentManager_LoadDeployments(t *testing.T) {
 
 	// Add some SQL content to the first deployment's expand.sql
 	testSQL := "CREATE TABLE test_users (id SERIAL PRIMARY KEY, name VARCHAR(255));"
-	if err := os.WriteFile(deployments[0].ExpandSQLFiles[0].Path, []byte(testSQL), 0644); err != nil {
-		t.Fatalf("Failed to write test SQL: %v", err)
+	if deployments[0].ExpandSQLFile != nil {
+		if err := os.WriteFile(deployments[0].ExpandSQLFile.Path, []byte(testSQL), 0644); err != nil {
+			t.Fatalf("Failed to write test SQL: %v", err)
+		}
+	} else {
+		t.Fatal("Expected expand SQL file to exist")
 	}
 
 	// Load deployments again to verify content
@@ -190,8 +200,8 @@ func TestDeploymentManager_LoadDeployments(t *testing.T) {
 	}
 
 	// Verify SQL content was loaded
-	if len(deployments[0].ExpandSQLFiles) == 0 || deployments[0].ExpandSQLFiles[0].Content != testSQL {
-		t.Error("Pre SQL content should be loaded correctly")
+	if deployments[0].ExpandSQLFile == nil || deployments[0].ExpandSQLFile.Content != testSQL {
+		t.Error("Expand SQL content should be loaded correctly")
 	}
 }
 
