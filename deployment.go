@@ -25,6 +25,15 @@ var (
 
 	//go:embed assets/post.sh
 	postScriptTemplate string
+
+	//go:embed assets/expand.sql
+	expandSQLTemplate string
+
+	//go:embed assets/migrate.sql
+	migrateSQLTemplate string
+
+	//go:embed assets/contract.sql
+	contractSQLTemplate string
 )
 
 type (
@@ -246,6 +255,49 @@ func loadDeployment(deploymentsPath, id, dirName string) (*Deployment, error) {
 	return deployment, nil
 }
 
+// getNextDeploymentID determines the next sequential deployment ID by checking existing deployment directories
+func getNextDeploymentID(deploymentsPath string) (string, error) {
+	// Check if deployments directory exists
+	entries, err := os.ReadDir(deploymentsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No deployments directory, start with ID 1
+			return "000001", nil
+		}
+		return "", fmt.Errorf("failed to read deployments directory: %w", err)
+	}
+
+	// Find the last deployment directory (entries are sorted, so last is highest)
+	var lastID string
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+		if !entry.IsDir() {
+			continue
+		}
+
+		// Extract ID from directory name (format: XXXXXX_name)
+		matches := deploymentDirPattern.FindStringSubmatch(entry.Name())
+		if len(matches) == 3 {
+			lastID = matches[1]
+			break
+		}
+	}
+
+	// If no valid deployment directories found, start with ID 1
+	if lastID == "" {
+		return "000001", nil
+	}
+
+	// Parse the last ID and increment it
+	idNum, err := strconv.Atoi(lastID)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse deployment ID %s: %w", lastID, err)
+	}
+
+	// Format next ID as 6-digit zero-padded string
+	return fmt.Sprintf("%06d", idNum+1), nil
+}
+
 // CreateDeployment creates a new deployment directory with the given name
 func CreateDeployment(deploymentsPath, name string) (*Deployment, error) {
 	if deploymentsPath == "" {
@@ -256,25 +308,12 @@ func CreateDeployment(deploymentsPath, name string) (*Deployment, error) {
 	name = strings.ReplaceAll(name, " ", "_")
 	name = strings.ToLower(name)
 
-	// Find the next sequential ID by checking existing deployments
-	existingDeployments, err := LoadDeployments(deploymentsPath)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("failed to load existing deployments: %w", err)
+	// Get the next deployment ID
+	id, err := getNextDeploymentID(deploymentsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine next deployment ID: %w", err)
 	}
 
-	// Determine next ID
-	nextID := 1
-	for _, m := range existingDeployments {
-		// Parse the ID as an integer
-		if idNum, err := strconv.Atoi(m.ID); err == nil {
-			if idNum >= nextID {
-				nextID = idNum + 1
-			}
-		}
-	}
-
-	// Format ID as 6-digit zero-padded string
-	id := fmt.Sprintf("%06d", nextID)
 	dirName := fmt.Sprintf("%s_%s", id, name)
 	deploymentPath := filepath.Join(deploymentsPath, dirName)
 
@@ -294,9 +333,9 @@ func CreateDeployment(deploymentsPath, name string) (*Deployment, error) {
 		content string
 		mode    os.FileMode
 	}{
-		{filepath.Join(deploymentPath, "expand.sql"), "-- Expand phase SQL (optional)\n-- Add new columns, tables, etc. that are backward compatible\n", 0644},
-		{filepath.Join(deploymentPath, "migrate.sql"), "-- Migrate phase SQL (optional)\n-- Core schema changes, data transformations\n", 0644},
-		{filepath.Join(deploymentPath, "contract.sql"), "-- Contract phase SQL (optional)\n-- Remove old columns, tables, etc. no longer needed\n", 0644},
+		{filepath.Join(deploymentPath, "expand.sql"), expandSQLTemplate, 0644},
+		{filepath.Join(deploymentPath, "migrate.sql"), migrateSQLTemplate, 0644},
+		{filepath.Join(deploymentPath, "contract.sql"), contractSQLTemplate, 0644},
 		{filepath.Join(deploymentPath, "expand.sh"), expandScriptTemplate, 0755},
 		{filepath.Join(deploymentPath, "migrate.sh"), migrateScriptTemplate, 0755},
 		{filepath.Join(deploymentPath, "contract.sh"), contractScriptTemplate, 0755},
