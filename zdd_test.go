@@ -3,6 +3,7 @@ package zdd_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,67 +16,156 @@ import (
 	"github.com/mantty/zdd/postgres"
 )
 
-// setupTestDB creates a test database connection and cleans it up
-func setupTestDB(t *testing.T) (*postgres.DB, string) {
-	t.Helper()
+var (
+	sharedPgContainer testcontainers.Container
+	sharedDBURL       string
+)
 
+// TestMain sets up a single Postgres container for all tests
+func TestMain(m *testing.M) {
 	ctx := context.Background()
-	pgContainer, err := pgTest.Run(context.Background(),
+
+	// Create container once for all tests
+	pgContainer, err := pgTest.Run(ctx,
 		"postgres:17-alpine",
 		pgTest.WithDatabase("test"),
 		pgTest.WithUsername("user"),
 		pgTest.WithPassword("password"),
 		pgTest.BasicWaitStrategies(),
 	)
-
-	t.Cleanup(func() {
-		testcontainers.CleanupContainer(t, pgContainer)
-	})
-
 	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
+		fmt.Fprintf(os.Stderr, "Failed to create postgres container: %v\n", err)
+		os.Exit(1)
 	}
+
+	sharedPgContainer = pgContainer
 
 	dbURL, err := pgContainer.ConnectionString(ctx)
 	if err != nil {
-		t.Fatalf("Failed to get test database connection string: %v", err)
+		fmt.Fprintf(os.Stderr, "Failed to get connection string: %v\n", err)
+		testcontainers.CleanupContainer(nil, pgContainer)
+		os.Exit(1)
+	}
+	sharedDBURL = dbURL
+
+	// Connect to initialize the zdd schema in test database
+	db, err := postgres.NewDB(ctx, dbURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to connect to test database: %v\n", err)
+		testcontainers.CleanupContainer(nil, pgContainer)
+		os.Exit(1)
+	}
+	db.Close()
+
+	// Create a template database from the initialized test database
+	// This will be much faster to clone than restoring from dump
+	if err := createTemplateDatabase(ctx, pgContainer); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create template database: %v\n", err)
+		testcontainers.CleanupContainer(nil, pgContainer)
+		os.Exit(1)
 	}
 
-	// TODO: There shouldn't be any need to establish the DB connection
-	// within the testing code - given the app itself will only take a string
-	db, err := postgres.NewDB(ctx, dbURL)
+	// Run tests
+	code := m.Run()
+
+	// Cleanup container after all tests
+	if sharedPgContainer != nil {
+		if err := sharedPgContainer.Terminate(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to terminate container: %v\n", err)
+		}
+	}
+
+	os.Exit(code)
+}
+
+// createTemplateDatabase creates a template database from the current test database
+func createTemplateDatabase(ctx context.Context, container testcontainers.Container) error {
+	// Execute all commands in a single shell invocation to minimize Docker exec overhead
+	// Using psql with multiple -c flags runs each command separately (outside transaction blocks)
+	exitCode, reader, err := container.Exec(ctx, []string{
+		"sh", "-c",
+		`psql -U user -d postgres \
+			-c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'test' AND pid <> pg_backend_pid();" \
+			-c "CREATE DATABASE test_template WITH TEMPLATE test;" \
+			-c "UPDATE pg_database SET datistemplate = true WHERE datname = 'test_template';"`,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create template database: %w", err)
+	}
+	if exitCode != 0 {
+		output, _ := io.ReadAll(reader)
+		return fmt.Errorf("create template database exited with code %d: %s", exitCode, string(output))
+	}
+
+	return nil
+}
+
+// restoreDatabase restores the database from template (much faster than dump/restore)
+func restoreDatabase(ctx context.Context, container testcontainers.Container) error {
+	// Execute all commands in a single shell invocation to minimize Docker exec overhead
+	// Using psql with multiple -c flags (they run outside transaction blocks)
+	exitCode, reader, err := container.Exec(ctx, []string{
+		"sh", "-c",
+		`psql -U user -d postgres \
+			-c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'test' AND pid <> pg_backend_pid();" \
+			-c "DROP DATABASE IF EXISTS test;" \
+			-c "CREATE DATABASE test WITH TEMPLATE test_template;"`,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to restore database: %w", err)
+	}
+	if exitCode != 0 {
+		output, _ := io.ReadAll(reader)
+		return fmt.Errorf("restore database exited with code %d: %s", exitCode, string(output))
+	}
+
+	return nil
+}
+
+// setupTestDB creates a test database connection using the shared container
+// and restores it to pristine state after the test completes
+func setupTestDB(t *testing.T) (*postgres.DB, string) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	// Restore database to pristine state BEFORE test runs
+	// This ensures each test starts with a clean slate
+	if err := restoreDatabase(ctx, sharedPgContainer); err != nil {
+		t.Fatalf("Failed to restore database before test: %v", err)
+	}
+
+	db, err := postgres.NewDB(ctx, sharedDBURL)
 	if err != nil {
 		t.Fatalf("Failed to connect to test database: %v", err)
 	}
 
-	// Ensure deployment schema exists (should be auto-created by NewDB)
-	if err := db.ExecuteSQLInTransaction("SELECT COUNT(*) FROM zdd_deployments.applied_deployments"); err != nil {
-		t.Fatalf("Deployment schema should exist after NewDB initialization: %v", err)
-	}
+	// Just close connection when done - restoration happens at START of next test
+	t.Cleanup(func() {
+		db.Close()
+	})
 
-	return db, dbURL
+	return db, sharedDBURL
 }
 
-// cleanupTestDB removes test data from the database
-// TODO: Completely reset DB schemas between test cases (below does not do that)
-// func cleanupTestDB(db *postgres.DB) error {
-// 	// Drop any test tables and the zdd_migrations schema
-// 	cleanupSQL := []string{
-// 		"DROP TABLE IF EXISTS test_users CASCADE",
-// 		"DROP TABLE IF EXISTS test_posts CASCADE",
-// 		"DROP TABLE IF EXISTS categories CASCADE",
-// 		"DROP SCHEMA IF EXISTS zdd_migrations CASCADE",
-// 	}
+// setupTestDBReadOnly creates a read-only test database connection
+// Use this for tests that only query and don't modify the database
+func setupTestDBReadOnly(t *testing.T) (*postgres.DB, string) {
+	t.Helper()
 
-// 	for _, sql := range cleanupSQL {
-// 		if err := db.ExecuteSQLInTransaction([]string{sql}); err != nil {
-// 			// Ignore errors during cleanup
-// 			continue
-// 		}
-// 	}
+	ctx := context.Background()
 
-// 	return nil
-// }
+	db, err := postgres.NewDB(ctx, sharedDBURL)
+	if err != nil {
+		t.Fatalf("Failed to connect to test database: %v", err)
+	}
+
+	t.Cleanup(func() {
+		db.Close()
+	})
+
+	return db, sharedDBURL
+}
 
 // createTestDeploymentDir creates a temporary deployment directory for testing
 func createTestDeploymentDir(t *testing.T) string {
@@ -206,7 +296,8 @@ func TestDeploymentManager_LoadDeployments(t *testing.T) {
 }
 
 func TestDatabaseProvider_InitAndQuery(t *testing.T) {
-	db, _ := setupTestDB(t)
+	// This test only reads from DB, no need to restore
+	db, _ := setupTestDBReadOnly(t)
 
 	// Test getting applied deployments (should be empty initially)
 	applied, err := db.GetAppliedDeployments()
@@ -394,7 +485,6 @@ func TestDeploymentBundles(t *testing.T) {
 func runDeploymentBundleTest(t *testing.T, bundlePath string) {
 	// Setup test database
 	db, _ := setupTestDB(t)
-	defer db.Close()
 
 	// Get absolute path
 	absBundlePath, _ := filepath.Abs(bundlePath)
