@@ -87,8 +87,6 @@ type (
 		GetLastAppliedDeployment() (*DBDeploymentRecord, error)
 		RecordDeployment(deployment Deployment, checksum string) error
 		ExecuteSQLInTransaction(sqlStatements ...string) error
-		DumpSchema() (string, error)
-		GenerateSchemaDiff(before, after string) error
 		ConnectionString() string
 		Close() error
 	}
@@ -99,11 +97,8 @@ const (
 )
 
 var (
-	// Regex patterns for deployment directory files
+	// Regex pattern for deployment directory naming
 	deploymentDirPattern = regexp.MustCompile(`^(\d{6})_(.+)$`)
-	expandSQLPattern     = regexp.MustCompile(`^expand\.sql$`)
-	migrateSQLPattern    = regexp.MustCompile(`^migrate\.sql$`)
-	contractSQLPattern   = regexp.MustCompile(`^contract\.sql$`)
 )
 
 // LoadDeployments scans the deployments directory and loads all deployments
@@ -154,63 +149,136 @@ func LoadDeployments(deploymentsPath string) ([]Deployment, error) {
 	return deployments, nil
 }
 
-// loadSQLFile loads a single SQL file matching a pattern from directory entries
-func loadSQLFile(deploymentPath string, entries []os.DirEntry, pattern *regexp.Regexp, errorContext string) (*SQLFile, error) {
+// loadSQLFiles loads all SQL files for a deployment (expand, migrate, contract)
+func loadSQLFiles(deployment *Deployment, deploymentPath string) error {
+	// Pattern to match phase SQL files: expand.sql, migrate.sql, contract.sql
+	pattern := regexp.MustCompile(`^(expand|migrate|contract)\.sql$`)
+
+	entries, err := os.ReadDir(deploymentPath)
+	if err != nil {
+		return fmt.Errorf("failed to read deployment directory %s: %w", deploymentPath, err)
+	}
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 
-		fileName := entry.Name()
-		if !pattern.MatchString(fileName) {
-			continue
-		}
+		name := entry.Name()
+		if matches := pattern.FindStringSubmatch(name); len(matches) == 2 {
+			phase := matches[1]
 
-		filePath := filepath.Join(deploymentPath, fileName)
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read %s file %s: %w", errorContext, filePath, err)
-		}
+			// Load SQL file content
+			filePath := filepath.Join(deploymentPath, name)
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				return fmt.Errorf("failed to read %s: %w", filePath, err)
+			}
 
-		sqlFile := &SQLFile{
-			Path:    filePath,
-			Content: string(content),
-		}
+			sqlFile := &SQLFile{
+				Path:    filePath,
+				Content: string(content),
+			}
 
-		// If the file is empty or contains only comments/whitespace, treat it as if it doesn't exist
-		if !IsNonEmptySQL(sqlFile) {
-			return nil, nil
-		}
+			// If the file is empty or contains only comments/whitespace, skip it
+			if !IsNonEmptySQL(sqlFile) {
+				continue
+			}
 
-		return sqlFile, nil
-	}
-
-	return nil, nil
-}
-
-// loadScript loads a shell script from a directory, returns nil if not found
-// If the script is not found in the specified directory, it will check the deploymentsPath for a default script
-func loadScript(dir, filename, deploymentsPath string) *ScriptFile {
-	filePath := filepath.Join(dir, filename)
-	if _, err := os.Stat(filePath); err == nil {
-		// Script exists in the deployment directory
-		return &ScriptFile{
-			Path: filePath,
-		}
-	}
-
-	// Script doesn't exist in deployment directory, check for default script
-	// Only check if we're not already looking in the deployments root
-	if dir != deploymentsPath {
-		defaultPath := filepath.Join(deploymentsPath, filename)
-		if _, err := os.Stat(defaultPath); err == nil {
-			return &ScriptFile{
-				Path: defaultPath,
+			// Assign to appropriate field based on phase
+			switch phase {
+			case "expand":
+				deployment.ExpandSQLFile = sqlFile
+			case "migrate":
+				deployment.MigrateSQLFile = sqlFile
+			case "contract":
+				deployment.ContractSQLFile = sqlFile
 			}
 		}
 	}
 
 	return nil
+}
+
+// loadScripts loads all executable scripts for a deployment (expand, migrate, contract, post)
+func loadScripts(deployment *Deployment, deploymentPath, deploymentsPath string) error {
+	phases := []string{"expand", "migrate", "contract", "post"}
+
+	for _, phase := range phases {
+		// Inline loadScript logic
+		script, err := findExecutableScript(deploymentPath, phase)
+		if err != nil {
+			return err
+		}
+		if script == nil {
+			// Script doesn't exist in deployment directory, check for default script
+			// Only check if we're not already looking in the deployments root
+			if deploymentPath != deploymentsPath {
+				script, err = findExecutableScript(deploymentsPath, phase)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		// Assign to appropriate field based on phase
+		switch phase {
+		case "expand":
+			deployment.ExpandScript = script
+		case "migrate":
+			deployment.MigrateScript = script
+		case "contract":
+			deployment.ContractScript = script
+		case "post":
+			deployment.PostScript = script
+		}
+	}
+
+	return nil
+}
+
+// findExecutableScript looks for executable files matching a phase name in a directory
+// Returns error if multiple matches found, nil if none found, or the ScriptFile if exactly one found
+func findExecutableScript(dir, phaseName string) (*ScriptFile, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read directory %s: %w", dir, err)
+	}
+
+	// Create regex pattern to match: phaseName or phaseName.extension
+	pattern := regexp.MustCompile(`^` + regexp.QuoteMeta(phaseName) + `(\.[^.]+)?$`)
+
+	var matches []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		if pattern.MatchString(name) {
+			filePath := filepath.Join(dir, name)
+
+			// Check if file is executable
+			if info, err := os.Stat(filePath); err == nil {
+				mode := info.Mode()
+				if mode&0111 != 0 { // Check if any execute bit is set
+					matches = append(matches, filePath)
+				}
+			}
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil, nil
+	}
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("multiple executable files found for phase %s in %s: %v", phaseName, dir, matches)
+	}
+
+	return &ScriptFile{Path: matches[0]}, nil
 }
 
 // loadDeployment loads a single deployment from its directory
@@ -230,27 +298,15 @@ func loadDeployment(deploymentsPath, id, dirName string) (*Deployment, error) {
 		Directory: deploymentPath,
 	}
 
-	// Load SQL files
-	entries, err := os.ReadDir(deploymentPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read deployment directory %s: %w", deploymentPath, err)
-	}
-
-	if deployment.ExpandSQLFile, err = loadSQLFile(deploymentPath, entries, expandSQLPattern, "expand SQL"); err != nil {
-		return nil, err
-	}
-	if deployment.MigrateSQLFile, err = loadSQLFile(deploymentPath, entries, migrateSQLPattern, "migrate SQL"); err != nil {
-		return nil, err
-	}
-	if deployment.ContractSQLFile, err = loadSQLFile(deploymentPath, entries, contractSQLPattern, "contract SQL"); err != nil {
+	// Load all SQL files
+	if err := loadSQLFiles(deployment, deploymentPath); err != nil {
 		return nil, err
 	}
 
-	// Load shell scripts (deployment-specific, with fallback to defaults in deploymentsPath)
-	deployment.ExpandScript = loadScript(deploymentPath, "expand.sh", deploymentsPath)
-	deployment.MigrateScript = loadScript(deploymentPath, "migrate.sh", deploymentsPath)
-	deployment.ContractScript = loadScript(deploymentPath, "contract.sh", deploymentsPath)
-	deployment.PostScript = loadScript(deploymentPath, "post.sh", deploymentsPath)
+	// Load all executable scripts
+	if err := loadScripts(deployment, deploymentPath, deploymentsPath); err != nil {
+		return nil, err
+	}
 
 	return deployment, nil
 }

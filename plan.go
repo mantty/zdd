@@ -71,12 +71,6 @@ func (p *Plan) Execute() error {
 		return nil
 	}
 
-	// Dump current schema before deployments
-	schemaBefore, err := p.db.DumpSchema()
-	if err != nil {
-		return fmt.Errorf("failed to dump schema before deployments: %w", err)
-	}
-
 	// Determine which deployment is the head (last pending)
 	// Since BuildPlan only includes tasks from pending deployments,
 	// the last task belongs to the last pending deployment
@@ -141,16 +135,6 @@ func (p *Plan) Execute() error {
 			return fmt.Errorf("failed to record deployment %s: %w", deploymentID, err)
 		}
 		fmt.Printf("Deployment %s applied successfully\n", deploymentID)
-	}
-
-	// Dump schema after deployments and generate diff
-	schemaAfter, err := p.db.DumpSchema()
-	if err != nil {
-		return fmt.Errorf("failed to dump schema after deployments: %w", err)
-	}
-
-	if err := p.db.GenerateSchemaDiff(schemaBefore, schemaAfter); err != nil {
-		return fmt.Errorf("failed to generate schema diff: %w", err)
 	}
 
 	fmt.Println("All deployments applied successfully!")
