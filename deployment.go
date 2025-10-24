@@ -201,84 +201,93 @@ func loadSQLFiles(deployment *Deployment, deploymentPath string) error {
 }
 
 // loadScripts loads all executable scripts for a deployment (expand, migrate, contract, post)
-func loadScripts(deployment *Deployment, deploymentPath, deploymentsPath string) error {
+func loadScripts(deployment *Deployment, deploymentPath string) error {
 	phases := []string{"expand", "migrate", "contract", "post"}
 
-	for _, phase := range phases {
-		// Inline loadScript logic
-		script, err := findExecutableScript(deploymentPath, phase)
-		if err != nil {
-			return err
-		}
-		if script == nil {
-			// Script doesn't exist in deployment directory, check for default script
-			// Only check if we're not already looking in the deployments root
-			if deploymentPath != deploymentsPath {
-				script, err = findExecutableScript(deploymentsPath, phase)
-				if err != nil {
-					return err
-				}
-			}
-		}
+	// Try to load scripts from deployment directory first
+	if err := loadScriptsFromDirectory(deployment, deploymentPath, phases); err != nil {
+		return err
+	}
 
-		// Assign to appropriate field based on phase
-		switch phase {
-		case "expand":
-			deployment.ExpandScript = script
-		case "migrate":
-			deployment.MigrateScript = script
-		case "contract":
-			deployment.ContractScript = script
-		case "post":
-			deployment.PostScript = script
-		}
+	// For any missing scripts, try to load from deployments root (fallback)
+	deploymentsPath := filepath.Dir(deploymentPath)
+	if err := loadScriptsFromDirectory(deployment, deploymentsPath, phases); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-// findExecutableScript looks for executable files matching a phase name in a directory
-// Returns error if multiple matches found, nil if none found, or the ScriptFile if exactly one found
-func findExecutableScript(dir, phaseName string) (*ScriptFile, error) {
+// loadScriptsFromDirectory loads executable scripts from a specific directory
+func loadScriptsFromDirectory(deployment *Deployment, dir string, phases []string) error {
+	// Pattern to match phase scripts: expand, expand.sh, migrate.py, contract, post.sh, etc.
+	pattern := regexp.MustCompile(`^(expand|migrate|contract|post)(\.[^.]+)?$`)
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil // Directory doesn't exist, that's ok
 		}
-		return nil, fmt.Errorf("failed to read directory %s: %w", dir, err)
+		return fmt.Errorf("failed to read directory %s: %w", dir, err)
 	}
 
-	// Create regex pattern to match: phaseName or phaseName.extension
-	pattern := regexp.MustCompile(`^` + regexp.QuoteMeta(phaseName) + `(\.[^.]+)?$`)
+	// Track matches per phase to detect conflicts
+	phaseMatches := make(map[string][]string)
 
-	var matches []string
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 
 		name := entry.Name()
-		if pattern.MatchString(name) {
+		if matches := pattern.FindStringSubmatch(name); len(matches) >= 2 {
+			phase := matches[1]
 			filePath := filepath.Join(dir, name)
 
 			// Check if file is executable
 			if info, err := os.Stat(filePath); err == nil {
 				mode := info.Mode()
 				if mode&0111 != 0 { // Check if any execute bit is set
-					matches = append(matches, filePath)
+					phaseMatches[phase] = append(phaseMatches[phase], filePath)
 				}
 			}
 		}
 	}
 
-	if len(matches) == 0 {
-		return nil, nil
-	}
-	if len(matches) > 1 {
-		return nil, fmt.Errorf("multiple executable files found for phase %s in %s: %v", phaseName, dir, matches)
+	// Check for conflicts and assign scripts
+	for _, phase := range phases {
+		matches := phaseMatches[phase]
+
+		if len(matches) > 1 {
+			return fmt.Errorf("multiple executable files found for phase %s in %s: %v", phase, dir, matches)
+		}
+
+		if len(matches) == 1 {
+			script := &ScriptFile{Path: matches[0]}
+
+			// Only assign if the deployment doesn't already have a script for this phase
+			switch phase {
+			case "expand":
+				if deployment.ExpandScript == nil {
+					deployment.ExpandScript = script
+				}
+			case "migrate":
+				if deployment.MigrateScript == nil {
+					deployment.MigrateScript = script
+				}
+			case "contract":
+				if deployment.ContractScript == nil {
+					deployment.ContractScript = script
+				}
+			case "post":
+				if deployment.PostScript == nil {
+					deployment.PostScript = script
+				}
+			}
+		}
 	}
 
-	return &ScriptFile{Path: matches[0]}, nil
+	return nil
 }
 
 // loadDeployment loads a single deployment from its directory
@@ -304,7 +313,7 @@ func loadDeployment(deploymentsPath, id, dirName string) (*Deployment, error) {
 	}
 
 	// Load all executable scripts
-	if err := loadScripts(deployment, deploymentPath, deploymentsPath); err != nil {
+	if err := loadScripts(deployment, deploymentPath); err != nil {
 		return nil, err
 	}
 
