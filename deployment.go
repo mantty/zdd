@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+const (
+	deploymentsDir = "migrations"
+)
+
 var (
 	//go:embed assets/expand.sh
 	expandScriptTemplate string
@@ -34,34 +38,35 @@ var (
 
 	//go:embed assets/contract.sql
 	contractSQLTemplate string
+
+	// Regex pattern for deployment directory naming
+	deploymentDirPattern = regexp.MustCompile(`^(\d{6})_(.+)$`)
+
+	// Regex pattern for matching deployment sql and sh files
+	deploymentFilePattern = regexp.MustCompile(`^(expand|migrate|contract|post)\.(sh|sql)$`)
 )
 
 type (
 	// Deployment represents a single deployment with its expand/migrate/contract SQL files
 	Deployment struct {
-		ID              string
-		Name            string
-		CreatedAt       time.Time
-		AppliedAt       *time.Time
-		ExpandSQLFile   *SQLFile
-		MigrateSQLFile  *SQLFile
-		ContractSQLFile *SQLFile
-		ExpandScript    *ScriptFile
-		MigrateScript   *ScriptFile
-		ContractScript  *ScriptFile
-		PostScript      *ScriptFile
-		Directory       string
+		ID        string
+		Name      string
+		AppliedAt *time.Time
+		Phases    map[string]DeploymentPhase
+		Directory string
 	}
 
-	// SQLFile represents a single SQL file (expand/migrate/contract)
-	SQLFile struct {
-		Path    string
-		Content string
+	// DeploymentDBRecord represents a deployment record in the zdd_deployments table
+	DeploymentDBRecord struct {
+		ID        string
+		Name      string
+		AppliedAt time.Time
+		Checksum  string // Optional: for integrity checking
 	}
 
-	// ScriptFile represents a shell script file
-	ScriptFile struct {
-		Path string
+	DeploymentPhase struct {
+		ScriptFilePath *string
+		SQLFilePath    *string
 	}
 
 	// DeploymentStatus represents the status of deployments in the system
@@ -72,33 +77,26 @@ type (
 		Missing []Deployment // Deployments that exist in DB but not locally
 	}
 
-	// DBDeploymentRecord represents a deployment record in the zdd_deployments table
-	DBDeploymentRecord struct {
-		ID        string
-		Name      string
-		AppliedAt time.Time
-		Checksum  string // Optional: for integrity checking
+	// ScriptFile represents a shell script file
+	ScriptFile struct {
+		Path string
+	}
+
+	// SQLFile represents a single SQL file (expand/migrate/contract)
+	SQLFile struct {
+		Path string
 	}
 
 	// DatabaseProvider interface abstracts database operations
 	DatabaseProvider interface {
 		InitDeploymentSchema() error
-		GetAppliedDeployments() ([]DBDeploymentRecord, error)
-		GetLastAppliedDeployment() (*DBDeploymentRecord, error)
+		GetAppliedDeployments() ([]DeploymentDBRecord, error)
+		GetLastAppliedDeployment() (*DeploymentDBRecord, error)
 		RecordDeployment(deployment Deployment, checksum string) error
 		ExecuteSQLInTransaction(sqlStatements ...string) error
 		ConnectionString() string
 		Close() error
 	}
-)
-
-const (
-	deploymentsDir = "migrations"
-)
-
-var (
-	// Regex pattern for deployment directory naming
-	deploymentDirPattern = regexp.MustCompile(`^(\d{6})_(.+)$`)
 )
 
 // LoadDeployments scans the deployments directory and loads all deployments
@@ -149,11 +147,8 @@ func LoadDeployments(deploymentsPath string) ([]Deployment, error) {
 	return deployments, nil
 }
 
-// loadSQLFiles loads all SQL files for a deployment (expand, migrate, contract)
-func loadSQLFiles(deployment *Deployment, deploymentPath string) error {
-	// Pattern to match phase SQL files: expand.sql, migrate.sql, contract.sql
-	pattern := regexp.MustCompile(`^(expand|migrate|contract)\.sql$`)
-
+// loadFiles loads sql and script files for a deployment
+func loadFiles(deployment *Deployment, deploymentPath string) error {
 	entries, err := os.ReadDir(deploymentPath)
 	if err != nil {
 		return fmt.Errorf("failed to read deployment directory %s: %w", deploymentPath, err)
@@ -165,125 +160,30 @@ func loadSQLFiles(deployment *Deployment, deploymentPath string) error {
 		}
 
 		name := entry.Name()
-		if matches := pattern.FindStringSubmatch(name); len(matches) == 2 {
-			phase := matches[1]
-
-			// Load SQL file content
-			filePath := filepath.Join(deploymentPath, name)
-			content, err := os.ReadFile(filePath)
-			if err != nil {
-				return fmt.Errorf("failed to read %s: %w", filePath, err)
-			}
-
-			sqlFile := &SQLFile{
-				Path:    filePath,
-				Content: string(content),
-			}
-
-			// If the file is empty or contains only comments/whitespace, skip it
-			if !IsNonEmptySQL(sqlFile) {
-				continue
-			}
-
-			// Assign to appropriate field based on phase
-			switch phase {
-			case "expand":
-				deployment.ExpandSQLFile = sqlFile
-			case "migrate":
-				deployment.MigrateSQLFile = sqlFile
-			case "contract":
-				deployment.ContractSQLFile = sqlFile
-			}
-		}
-	}
-
-	return nil
-}
-
-// loadScripts loads all executable scripts for a deployment (expand, migrate, contract, post)
-func loadScripts(deployment *Deployment, deploymentPath string) error {
-	phases := []string{"expand", "migrate", "contract", "post"}
-
-	// Try to load scripts from deployment directory first
-	if err := loadScriptsFromDirectory(deployment, deploymentPath, phases); err != nil {
-		return err
-	}
-
-	// For any missing scripts, try to load from deployments root (fallback)
-	deploymentsPath := filepath.Dir(deploymentPath)
-	if err := loadScriptsFromDirectory(deployment, deploymentsPath, phases); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// loadScriptsFromDirectory loads executable scripts from a specific directory
-func loadScriptsFromDirectory(deployment *Deployment, dir string, phases []string) error {
-	// Pattern to match phase scripts: expand, expand.sh, migrate.py, contract, post.sh, etc.
-	pattern := regexp.MustCompile(`^(expand|migrate|contract|post)(\.[^.]+)?$`)
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // Directory doesn't exist, that's ok
-		}
-		return fmt.Errorf("failed to read directory %s: %w", dir, err)
-	}
-
-	// Track matches per phase to detect conflicts
-	phaseMatches := make(map[string][]string)
-
-	for _, entry := range entries {
-		if entry.IsDir() {
+		matches := deploymentFilePattern.FindStringSubmatch(name)
+		if len(matches) != 3 {
 			continue
 		}
 
-		name := entry.Name()
-		if matches := pattern.FindStringSubmatch(name); len(matches) >= 2 {
-			phase := matches[1]
-			filePath := filepath.Join(dir, name)
+		phase := matches[1]
+		fileType := matches[2]
+		filePath := filepath.Join(deploymentPath, name)
 
-			// Check if file is executable
-			if info, err := os.Stat(filePath); err == nil {
-				mode := info.Mode()
-				if mode&0111 != 0 { // Check if any execute bit is set
-					phaseMatches[phase] = append(phaseMatches[phase], filePath)
-				}
-			}
-		}
-	}
-
-	// Check for conflicts and assign scripts
-	for _, phase := range phases {
-		matches := phaseMatches[phase]
-
-		if len(matches) > 1 {
-			return fmt.Errorf("multiple executable files found for phase %s in %s: %v", phase, dir, matches)
+		deploymentPhase := deployment.Phases[phase]
+		if fileType == "sql" {
+			deploymentPhase.SQLFilePath = &filePath
+			deployment.Phases[phase] = deploymentPhase
+			continue
 		}
 
-		if len(matches) == 1 {
-			script := &ScriptFile{Path: matches[0]}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("failed to read file info: %w", err)
+		}
 
-			// Only assign if the deployment doesn't already have a script for this phase
-			switch phase {
-			case "expand":
-				if deployment.ExpandScript == nil {
-					deployment.ExpandScript = script
-				}
-			case "migrate":
-				if deployment.MigrateScript == nil {
-					deployment.MigrateScript = script
-				}
-			case "contract":
-				if deployment.ContractScript == nil {
-					deployment.ContractScript = script
-				}
-			case "post":
-				if deployment.PostScript == nil {
-					deployment.PostScript = script
-				}
-			}
+		if info.Mode()&0111 != 0 {
+			deploymentPhase.ScriptFilePath = &filePath
+			deployment.Phases[phase] = deploymentPhase
 		}
 	}
 
@@ -303,17 +203,11 @@ func loadDeployment(deploymentsPath, id, dirName string) (*Deployment, error) {
 	deployment := &Deployment{
 		ID:        id,
 		Name:      matches[2],
-		CreatedAt: time.Time{}, // Sequential IDs don't encode creation time
 		Directory: deploymentPath,
+		Phases:    make(map[string]DeploymentPhase),
 	}
 
-	// Load all SQL files
-	if err := loadSQLFiles(deployment, deploymentPath); err != nil {
-		return nil, err
-	}
-
-	// Load all executable scripts
-	if err := loadScripts(deployment, deploymentPath); err != nil {
+	if err := loadFiles(deployment, deploymentPath); err != nil {
 		return nil, err
 	}
 
@@ -417,7 +311,6 @@ func CreateDeployment(deploymentsPath, name string) (*Deployment, error) {
 	deployment := &Deployment{
 		ID:        id,
 		Name:      name,
-		CreatedAt: time.Now(),
 		Directory: deploymentPath,
 	}
 
@@ -425,8 +318,8 @@ func CreateDeployment(deploymentsPath, name string) (*Deployment, error) {
 }
 
 // CompareDeployments compares local deployments with applied deployments and returns status
-func CompareDeployments(local []Deployment, applied []DBDeploymentRecord) *DeploymentStatus {
-	appliedMap := make(map[string]DBDeploymentRecord)
+func CompareDeployments(local []Deployment, applied []DeploymentDBRecord) *DeploymentStatus {
+	appliedMap := make(map[string]DeploymentDBRecord)
 	for _, m := range applied {
 		appliedMap[m.ID] = m
 	}
@@ -462,7 +355,6 @@ func CompareDeployments(local []Deployment, applied []DBDeploymentRecord) *Deplo
 			missingDeployment := Deployment{
 				ID:        appliedRecord.ID,
 				Name:      appliedRecord.Name,
-				CreatedAt: time.Time{}, // No creation time available for missing deployments
 				AppliedAt: &appliedRecord.AppliedAt,
 			}
 			status.Missing = append(status.Missing, missingDeployment)
@@ -472,23 +364,16 @@ func CompareDeployments(local []Deployment, applied []DBDeploymentRecord) *Deplo
 	return status
 }
 
-// CalculateChecksum calculates a checksum for a deployment based on its SQL content
+// CalculateChecksum calculates a checksum for a deployment based on its SQL file paths
+// TODO: Implement checksum calculation based on file paths or content if needed
 func CalculateChecksum(deployment Deployment) string {
 	hasher := sha256.New()
 
-	// Include expand SQL file
-	if deployment.ExpandSQLFile != nil {
-		hasher.Write([]byte(deployment.ExpandSQLFile.Content))
-	}
-
-	// Include migrate SQL file
-	if deployment.MigrateSQLFile != nil {
-		hasher.Write([]byte(deployment.MigrateSQLFile.Content))
-	}
-
-	// Include contract SQL file
-	if deployment.ContractSQLFile != nil {
-		hasher.Write([]byte(deployment.ContractSQLFile.Content))
+	// Include SQL file paths from phases
+	for phase, phaseData := range deployment.Phases {
+		if phaseData.SQLFilePath != nil {
+			hasher.Write([]byte(phase + ":" + *phaseData.SQLFilePath))
+		}
 	}
 
 	return fmt.Sprintf("%x", hasher.Sum(nil))
@@ -499,35 +384,31 @@ func (d Deployment) Tasks() []Task {
 	var tasks []Task
 	deployment := d
 
-	// Define phases in order with their associated scripts and SQL files
-	phases := []struct {
-		name    string
-		script  *ScriptFile
-		sqlFile *SQLFile
-	}{
-		{"expand", d.ExpandScript, d.ExpandSQLFile},
-		{"migrate", d.MigrateScript, d.MigrateSQLFile},
-		{"contract", d.ContractScript, d.ContractSQLFile},
-		{"post", d.PostScript, nil},
-	}
+	// Define phases in order: expand, migrate, contract, post
+	phaseOrder := []string{"expand", "migrate", "contract", "post"}
 
-	for _, phase := range phases {
+	for _, phaseName := range phaseOrder {
+		phaseData, exists := d.Phases[phaseName]
+		if !exists {
+			continue
+		}
+
 		// Add script task if script exists
-		if phase.script != nil {
+		if phaseData.ScriptFilePath != nil {
 			tasks = append(tasks, Task{
 				TaskType:   "script",
-				Path:       phase.script.Path,
-				Phase:      phase.name,
+				Path:       *phaseData.ScriptFilePath,
+				Phase:      phaseName,
 				Deployment: &deployment,
 			})
 		}
 
-		// Add SQL task if SQL file exists and has non-empty content
-		if phase.sqlFile != nil && IsNonEmptySQL(phase.sqlFile) {
+		// Add SQL task if SQL file exists (for expand, migrate, contract only)
+		if phaseData.SQLFilePath != nil && phaseName != "post" {
 			tasks = append(tasks, Task{
 				TaskType:   "sql",
-				Path:       phase.sqlFile.Path,
-				Phase:      phase.name,
+				Path:       *phaseData.SQLFilePath,
+				Phase:      phaseName,
 				Deployment: &deployment,
 			})
 		}
@@ -536,27 +417,18 @@ func (d Deployment) Tasks() []Task {
 	return tasks
 }
 
-// IsNonEmptySQL checks if a SQL file contains non-empty SQL content
-// It returns true if the file contains actual SQL statements (not just comments or whitespace)
-func IsNonEmptySQL(sqlFile *SQLFile) bool {
-	if sqlFile == nil {
+// IsNonEmptySQL checks if a SQL file exists at the given path
+// Since we no longer load content, this just checks file existence
+func IsNonEmptySQL(sqlFilePath string) bool {
+	if sqlFilePath == "" {
 		return false
 	}
 
-	content := strings.TrimSpace(sqlFile.Content)
-	if content == "" {
+	if _, err := os.Stat(sqlFilePath); err != nil {
 		return false
 	}
 
-	// Check if there's actual SQL content beyond comments
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "--") {
-			return true
-		}
-	}
-	return false
+	return true
 }
 
 // ListDeployments loads deployments, optionally compares with database, and outputs a formatted status report
@@ -568,7 +440,7 @@ func ListDeployments(deploymentsPath string, db DatabaseProvider) error {
 	}
 
 	// Get applied deployments from database if connected
-	var appliedDeployments []DBDeploymentRecord
+	var appliedDeployments []DeploymentDBRecord
 	if db != nil {
 		if err := db.InitDeploymentSchema(); err != nil {
 			return fmt.Errorf("failed to initialize deployment schema: %w", err)
@@ -597,14 +469,12 @@ func ListDeployments(deploymentsPath string, db DatabaseProvider) error {
 		fmt.Printf("\nPending (%d):\n", len(status.Pending))
 		for _, d := range status.Pending {
 			var phases []string
-			if IsNonEmptySQL(d.ExpandSQLFile) {
-				phases = append(phases, "expand")
-			}
-			if IsNonEmptySQL(d.MigrateSQLFile) {
-				phases = append(phases, "migrate")
-			}
-			if IsNonEmptySQL(d.ContractSQLFile) {
-				phases = append(phases, "contract")
+			for _, phaseName := range []string{"expand", "migrate", "contract"} {
+				if phaseData, exists := d.Phases[phaseName]; exists && phaseData.SQLFilePath != nil {
+					if IsNonEmptySQL(*phaseData.SQLFilePath) {
+						phases = append(phases, phaseName)
+					}
+				}
 			}
 
 			phaseInfo := ""

@@ -74,7 +74,7 @@ func (db *DB) InitDeploymentSchema() error {
 }
 
 // GetAppliedDeployments returns all deployments that have been applied to the database
-func (db *DB) GetAppliedDeployments() ([]zdd.DBDeploymentRecord, error) {
+func (db *DB) GetAppliedDeployments() ([]zdd.DeploymentDBRecord, error) {
 	query := `
 		SELECT id, name, applied_at, COALESCE(checksum, '') as checksum 
 		FROM zdd_deployments.applied_deployments 
@@ -87,9 +87,9 @@ func (db *DB) GetAppliedDeployments() ([]zdd.DBDeploymentRecord, error) {
 	}
 	defer rows.Close()
 
-	var deployments []zdd.DBDeploymentRecord
+	var deployments []zdd.DeploymentDBRecord
 	for rows.Next() {
-		var d zdd.DBDeploymentRecord
+		var d zdd.DeploymentDBRecord
 		if err := rows.Scan(&d.ID, &d.Name, &d.AppliedAt, &d.Checksum); err != nil {
 			return nil, fmt.Errorf("failed to scan deployment record: %w", err)
 		}
@@ -104,7 +104,7 @@ func (db *DB) GetAppliedDeployments() ([]zdd.DBDeploymentRecord, error) {
 }
 
 // GetLastAppliedDeployment returns the most recently applied deployment
-func (db *DB) GetLastAppliedDeployment() (*zdd.DBDeploymentRecord, error) {
+func (db *DB) GetLastAppliedDeployment() (*zdd.DeploymentDBRecord, error) {
 	query := `
 		SELECT id, name, applied_at, COALESCE(checksum, '') as checksum 
 		FROM zdd_deployments.applied_deployments 
@@ -112,7 +112,7 @@ func (db *DB) GetLastAppliedDeployment() (*zdd.DBDeploymentRecord, error) {
 		LIMIT 1
 	`
 
-	var d zdd.DBDeploymentRecord
+	var d zdd.DeploymentDBRecord
 	err := db.pool.QueryRow(db.ctx, query).Scan(&d.ID, &d.Name, &d.AppliedAt, &d.Checksum)
 	if err != nil {
 		if err == pgx.ErrNoRows {

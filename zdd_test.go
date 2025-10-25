@@ -231,15 +231,15 @@ func TestDeploymentManager_CreateDeployment(t *testing.T) {
 	}
 
 	loadedDeployment := deployments[0]
-	// Since files are empty, they should not be loaded (should be nil)
-	if loadedDeployment.ExpandSQLFile != nil {
-		t.Error("Expected expand SQL file to be nil (file is empty)")
+	// Check that phases are populated but since files are empty, we expect file paths but no special content checks
+	if expandPhase, exists := loadedDeployment.Phases["expand"]; !exists || expandPhase.SQLFilePath == nil {
+		t.Error("Expected expand phase with SQL file path to exist")
 	}
-	if loadedDeployment.MigrateSQLFile != nil {
-		t.Error("Expected migrate SQL file to be nil (file is empty)")
+	if migratePhase, exists := loadedDeployment.Phases["migrate"]; !exists || migratePhase.SQLFilePath == nil {
+		t.Error("Expected migrate phase with SQL file path to exist")
 	}
-	if loadedDeployment.ContractSQLFile != nil {
-		t.Error("Expected contract SQL file to be nil (file is empty)")
+	if contractPhase, exists := loadedDeployment.Phases["contract"]; !exists || contractPhase.SQLFilePath == nil {
+		t.Error("Expected contract phase with SQL file path to exist")
 	}
 }
 
@@ -284,9 +284,14 @@ func TestDeploymentManager_LoadDeployments(t *testing.T) {
 		t.Errorf("Expected second deployment ID %s, got %s", deployment2.ID, deployments[1].ID)
 	}
 
-	// Verify SQL content was loaded
-	if deployments[0].ExpandSQLFile == nil || deployments[0].ExpandSQLFile.Content != testSQL {
-		t.Error("Expand SQL content should be loaded correctly")
+	// Verify SQL file paths are loaded
+	if expandPhase, exists := deployments[0].Phases["expand"]; !exists || expandPhase.SQLFilePath == nil {
+		t.Error("Expand SQL file path should be loaded")
+	}
+
+	// Verify script file paths are loaded
+	if expandPhase, exists := deployments[0].Phases["expand"]; !exists || expandPhase.ScriptFilePath == nil {
+		t.Error("Expand script file path should be loaded")
 	}
 }
 
