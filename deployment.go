@@ -77,16 +77,6 @@ type (
 		Missing []Deployment // Deployments that exist in DB but not locally
 	}
 
-	// ScriptFile represents a shell script file
-	ScriptFile struct {
-		Path string
-	}
-
-	// SQLFile represents a single SQL file (expand/migrate/contract)
-	SQLFile struct {
-		Path string
-	}
-
 	// DatabaseProvider interface abstracts database operations
 	DatabaseProvider interface {
 		InitDeploymentSchema() error
